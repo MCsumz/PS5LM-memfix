@@ -17,27 +17,23 @@
 </p>
 
 > [!IMPORTANT]
-> **This is a modified build of [cobanov/PS5LM](https://github.com/cobanov/PS5LM) 0.11.0 (memfix8)
-> for long chats and agent use from OpenWebUI**, tested on a PS5 Fat:
-> - **Memory:** a long chat no longer fills the pool about 0.1 GB at a time until the model stops
->   (`patches/sdk`, `patches/0010`).
-> - **Connections:** a streamed reply keeps its keep-alive connection, so OpenWebUI's tool-call
->   continuations no longer fail with "Server Connection Error" (`patches/0011`).
-> - **Prompt cache:** a new message after an agent turn no longer reprocesses the whole turn
->   (Qwen3.5 template, `patches/0012`): 4 s instead of minutes.
-> - **Media marker:** text that contains the server's image marker, such as `/props` read by a
->   tool, no longer breaks the chat with "Failed to tokenize prompt" (`patches/0013`).
+> **PS5LM-memfix** is [cobanov/PS5LM](https://github.com/cobanov/PS5LM) **0.11.0** with fixes for
+> long chats and agent use from Open WebUI. Current release: **memfix8**.
 >
-> **Measured with the setup it was made for:** `Qwen3.5-9B-Q4_K_M.gguf` with its vision module
-> `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache, from OpenWebUI with tools. On 0.11.0 the
-> title gets 12 GiB, and 0.75 GiB of the pool stayed free after a 47.9k-token prompt (0.9.1-memfix:
-> 0.35 GiB). On the original 0.9.1 the pool filled during a long chat and the model stopped before
-> 48k tokens.
+> | Fix | What changes | Patch |
+> |---|---|---|
+> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` |
+> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` |
+> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` |
+> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` |
 >
-> Details and measurements in the [CHANGELOG](CHANGELOG.md) and
-> [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1). Everything else is the original
-> PS5LM, and the rest of this README is the original's: report issues with these fixes here,
-> anything else [upstream](https://github.com/cobanov/PS5LM/issues).
+> **Tested on a PS5 Fat** with Qwen3.5 9B Q4_K_M and its Q8_0 vision module (64k context, q8_0
+> cache) from Open WebUI with tools: 0.75 GiB still free after a 47.9k-token prompt, and a follow-up
+> message after an agent turn in 4 s.
+>
+> Details in the [CHANGELOG](CHANGELOG.md) and [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1).
+> Everything else, including the rest of this README, is the original PS5LM; report problems with it
+> [upstream](https://github.com/cobanov/PS5LM/issues).
 
 > **New: decision models, powered by [Ollaya](https://ollaya.dev).** PS5LM now runs Jev-like
 > decision models (d1, Clef, OpenJev and more) on the GPU and answers the same `/v1/systemone`
