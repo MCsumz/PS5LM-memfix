@@ -31,6 +31,9 @@
 > cache) from Open WebUI with tools: 0.75 GiB still free after a 47.9k-token prompt, and a follow-up
 > message after an agent turn in 4 s.
 >
+> **Planned:** testing other popular model families and extending the fixes to them where needed;
+> the prompt-cache fix covers Qwen3.5 only so far.
+>
 > Details in the [CHANGELOG](CHANGELOG.md) and [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1).
 > Everything else, including the rest of this README, is the original PS5LM; report problems with it
 > [upstream](https://github.com/cobanov/PS5LM/issues).
