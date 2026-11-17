@@ -11,12 +11,16 @@ export PS5LM_NATIVE_SOURCES="${PS5LM_NATIVE_SOURCES:-$root/.deps/native-ci-src}"
 export BUILD_JOBS="${BUILD_JOBS:-2}"
 [[ $BUILD_JOBS =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be a positive integer' >&2; exit 2; }
 export CMAKE_BUILD_PARALLEL_LEVEL="$BUILD_JOBS"
+# Seconds for each of the two long steps (RADV, the title). An x86-64 container
+# under Rosetta builds several times slower than CI's runners.
+step_timeout="${PS5LM_STEP_TIMEOUT:-1800}"
+[[ $step_timeout =~ ^[1-9][0-9]*$ ]] || { echo 'PS5LM_STEP_TIMEOUT must be a positive integer' >&2; exit 2; }
 # SDK archive wrappers resolve this as a path, not a PATH command name.
 llvm_config=$(command -v "${LLVM_CONFIG:-llvm-config}") || {
     echo "title-check: missing LLVM_CONFIG tool: ${LLVM_CONFIG:-llvm-config}" >&2; exit 2;
 }
 export LLVM_CONFIG="$llvm_config"
-for tool in git clang clang++ make wget unzip sha256sum timeout python3 cmake ninja meson rsync glslangValidator glslc pkg-config curl ffmpeg; do
+for tool in git clang clang++ make patch wget unzip sha256sum timeout python3 cmake ninja meson rsync glslangValidator glslc pkg-config curl ffmpeg; do
     command -v "$tool" >/dev/null || { echo "title-check: missing $tool" >&2; exit 2; }
 done
 # Host check, no console or server: FtpWriter refuses a path with a line break.
@@ -98,7 +102,7 @@ ninja_real="$(command -v ninja)"
 printf '#!/bin/sh\nexec "%s" -j "%s" "$@"\n' "$ninja_real" "$BUILD_JOBS" > "$output/tools/ninja"
 chmod +x "$output/tools/ninja"
 export NINJA="$output/tools/ninja"
-timeout 1800 bash "$vk/tools/build-radv.sh" release
+timeout "$step_timeout" bash "$vk/tools/build-radv.sh" release
 
 # make libc already built this exact host tool, without the unrelated demo title.
 mkdir -p "$vk/build/host"
@@ -126,7 +130,7 @@ export PS5_OPENGL_SDK="$glsdk"
 }
 rm -rf -- "$root/build/app-ps5/llama/tools/ui/dist"
 export PS5LM_PREBUILT_UI=OFF
-timeout 1800 bash scripts/build-app.sh
+timeout "$step_timeout" bash scripts/build-app.sh
 bash "$vk/tools/inspect.sh" "$root/build/app-ps5/eboot.elf"
 title_id=$(python3 -c 'import json; print(json.load(open("ps5/app/sce_sys/param.json"))["titleId"])')
 app="$root/build/app-ps5/title/$title_id"

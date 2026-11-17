@@ -15,6 +15,8 @@ namespace ps5lm {
 namespace {
 
 constexpr double kGiB = 1073741824.0;
+// Free memory a plan keeps after loading when a cheaper cache can buy it (plan_model).
+constexpr double kHeadroomGib = 0.5;
 
 // GGUF metadata value types.
 enum : uint32_t { U8, I8, U16, I16, U32, I32, F32, BOOL, STRING, ARRAY, U64, I64, F64 };
@@ -303,6 +305,13 @@ double kv_bytes_per_token(const ModelInfo & m, const std::string & type) {
     return (m.n_kv_layers() - m.n_swa_layers) * kv_bytes_per_layer_token(m, type);
 }
 
+uint64_t fa_scratch_bytes(const ModelInfo & m, const std::string & type, uint32_t ctx) {
+    if (type == "f16") {
+        return 0;  // flash attention reads an f16 cache in place
+    }
+    return (uint64_t) m.n_head_kv * (m.key_length + m.value_length) * ctx * 2;
+}
+
 // Sampling as each model's authors recommend it. Settings the planner works
 // out (context, cache type) are not here.
 const std::vector<Preset> & presets() {
@@ -380,33 +389,45 @@ Plan plan_model(const ModelInfo & m, double budget_gib, uint32_t ctx_cap, const 
     // shortcut: 0.5 GiB more compute buffer for the 2048 ubatch is a guess; measure on the console.
     p.reserve_gib = 0.75 + p.state_gib + (m.mmproj.empty() ? 0.0 : 0.25) + (wide ? 0.5 : 0.0) + ub_extra;
 
-    // The longest context first, and at each length the best cache that fits.
+    // The longest context first. At each length the best cache that leaves
+    // kHeadroomGib free after loading, else the best that fits at all: the
+    // headroom costs cache precision, never context. A long chat's requests
+    // take more of the CPU heap as the history grows, and with half a GiB
+    // left the pool filled and the model stopped (a 9B with images at 64k,
+    // 10.9 of 11.4 GiB at load).
     static const uint32_t ctxs[]  = { 262144, 196608, 131072, 65536, 32768, 16384, 8192, 4096 };
     static const char *   types[] = { "f16", "q8_0", "q4_0" };
     for (uint32_t ctx : ctxs) {
         if (ctx > ctx_cap) {
             continue;
         }
-        for (const char * t : types) {
-            if (kv_force && std::strcmp(t, kv_force) != 0) {
-                continue;
+        for (const double headroom : { kHeadroomGib, 0.0 }) {
+            for (const char * t : types) {
+                if (kv_force && std::strcmp(t, kv_force) != 0) {
+                    continue;
+                }
+                // f16 only where it is cheap: q8_0 costs nothing measurable in quality.
+                if (!kv_force && std::strcmp(t, "f16") == 0 && ctx > 8192) {
+                    continue;
+                }
+                // Window layers hold the window and one ubatch, padded to 256,
+                // whatever the context (llama.cpp's iSWA cache without --swa-full).
+                const uint32_t swa_tokens = std::min(ctx, (m.swa_window + p.ubatch + 255) / 256 * 256);
+                const double   kv         = (kv_bytes_per_token(m, t) * ctx +
+                                     m.n_swa_layers * kv_bytes_per_layer_token(m, t) * swa_tokens) / kGiB;
+                const double   scratch    = fa_scratch_bytes(m, t, ctx) / kGiB;
+                const double total   = p.weights_gib + kv + scratch + p.state_gib + p.reserve_gib;
+                if (total + headroom <= budget_gib) {
+                    p.fits = true;
+                    p.ctx = ctx;
+                    p.kv_type = t;
+                    p.kv_gib = kv;
+                    p.scratch_bytes = fa_scratch_bytes(m, t, ctx);
+                    p.total_gib = total;
+                    break;
+                }
             }
-            // f16 only where it is cheap: q8_0 costs nothing measurable in quality.
-            if (!kv_force && std::strcmp(t, "f16") == 0 && ctx > 8192) {
-                continue;
-            }
-            // Window layers hold the window and one ubatch, padded to 256,
-            // whatever the context (llama.cpp's iSWA cache without --swa-full).
-            const uint32_t swa_tokens = std::min(ctx, (m.swa_window + p.ubatch + 255) / 256 * 256);
-            const double   kv         = (kv_bytes_per_token(m, t) * ctx +
-                                 m.n_swa_layers * kv_bytes_per_layer_token(m, t) * swa_tokens) / kGiB;
-            const double total = p.weights_gib + kv + p.state_gib + p.reserve_gib;
-            if (total <= budget_gib) {
-                p.fits = true;
-                p.ctx = ctx;
-                p.kv_type = t;
-                p.kv_gib = kv;
-                p.total_gib = total;
+            if (p.fits) {
                 break;
             }
         }

@@ -3,7 +3,33 @@
 Versions follow [semver](https://semver.org). The app's version is set in
 `ps5/app/version.hpp` and shown on the dashboard; each release is tagged
 `v<version>` and ships `ps5lm-app-v<version>.zip` (see `scripts/release-app.sh`).
-v0.1.x are the upstream payload releases by cobanov.
+v0.1.x are the upstream payload releases by cobanov. The `-memfixN` releases are this fork's
+(PS5LM-memfix): upstream releases with memory and connection fixes, tagged `v<version>-memfixN` and
+shipped as `ps5lm-app-v<version>-memfixN.zip`. The app calls itself by the upstream version.
+
+## [0.11.0-memfix8] - 2026-11-17
+
+memfix8's fixes carried onto upstream 0.11.0: the same patches, `patches/0011` to `0013` and
+`patches/sdk`, with `0013` re-based on 0.11.0's `server-common.cpp`. `patches/0010` and the app's
+memory changes come along as well. The app calls itself 0.11.0.
+
+### Changed
+- **Built on upstream 0.11.0** (llama.cpp b11827). The title gets 12 GiB of direct memory instead of
+  11.44, so the planner has 11.6 GiB for a model instead of 11.0; its prompt batch is 64.
+
+### Measured on a PS5 Fat
+Qwen3.5 9B Q4_K_M with `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache, used from Open WebUI
+0.13.3 with the Coding Sandbox and ten tool sets:
+- **Memory:** 0.75 GiB of the pool free after a 47,852-token prompt (memfix4 and memfix5: 0.35
+  GiB at the same size), cpu heap 2.08 to 2.13 GiB over 33 requests, no allocation errors.
+- **Connections:** a request on the connection of a streamed reply, and after a cancelled stream,
+  answered every time.
+- **Prompt cache:** after a 7-call agent turn, the next message evaluated 1,312 tokens and reused
+  17,220 (4 s). Every step of the following 14-call turn reused the cache.
+- **Speed:** 55 tokens a second generated (about 47 on memfix4); prompts at 192 tokens a second when
+  short and 335 at 48k (400 to 450 on 0.9.1), likely the smaller prompt batch.
+- **Agent work:** both turns' code passed its tests and independent checks in the sandbox; the
+  visible reply carried the answer. A 47.9k-token prompt found a fact hidden at 60 % depth.
 
 ## [0.11.0] - 2026-11-02
 
@@ -175,6 +201,128 @@ v0.1.x are the upstream payload releases by cobanov.
 - The SHA-256 check at the end of a download shows how far it has read, once a second, instead of
   a line that did not move for minutes on a large file. The queue is saved when the check starts,
   so a restart during the check repeats only the check, not the download (#30, #51).
+
+## [0.9.1-memfix8] - 2026-10-29
+
+memfix5 plus two llama-server fixes for agent chats in Open WebUI; memory handling is unchanged.
+memfix6 and memfix7 were test builds of the first fix.
+
+### Fixed
+- **Prompt cache survives a new user message (Qwen3.5).** The template rendered an assistant
+  message's thinking only after the last user message, so each new message re-rendered the turn
+  before it and the cache no longer matched: a 37k-token agent chat reprocessed for 190 s.
+  `patches/0012` makes the template honour llama.cpp's `preserve_thinking` (`--reasoning-preserve`,
+  on by default): a message gets a `<think>` block wherever it is, and only if it has reasoning.
+  Empty blocks are left out because Open WebUI sends no reasoning back, and a history of empty
+  blocks made Qwen3.5 answer inside its thinking (memfix6: 4 of 6 replies empty). Off with
+  `--no-reasoning-preserve` or `LLAMA_ARG_REASONING_PRESERVE=false` in `env.txt`. Checked by
+  `tests/test-chat.cpp`.
+- **Media marker in request text.** `/props` publishes the random marker that stands for an image
+  in the prompt. Text containing it (a tool that read `/props`) made mtmd expect one image more
+  than the request had, and every later request of that chat failed with "Failed to tokenize
+  prompt". `patches/0013` writes it as `[media marker]` in all message text and tool definitions
+  before the images get theirs (OpenAI, Anthropic and Responses endpoints).
+
+### Tested on a PS5 Fat
+Qwen3.5-9B Q4_K_M with `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache.
+- Next message after an agent turn: 52 tokens in 0.2 s instead of 4,684 in 10.5 s (4.6k-token
+  turn); 419 tokens in 1.2 s instead of 12,406 in 49.6 s (12k-token turn with tool calls).
+- Empty visible replies after an agent turn: 0 of 6 (memfix6: 4 of 6).
+- Open WebUI agent chat (Mac and LAN checks, `/props`, web search), then follow-ups in the same
+  chat: every answer visible, 118-376 tokens in 0.5-1.0 s each.
+- `/props` in a message, `/props` as a tool result, an image, and an image with the marker in its
+  text: all answered (before: HTTP 400).
+- Keep-alive: 8 of 8 streamed requests on one reused connection, gaps of 0-5 s.
+- 48k memory test, an image every turn: 42 turns to 48,504 tokens, then 6 full reprocesses; every
+  request answered, lowest 0.15 GiB free and level through all reprocesses, CPU heap 2.15-2.19 GiB.
+
+## [0.9.1-memfix5] - 2026-10-29
+
+memfix4 and one connection fix; nothing in memory changed.
+
+### Fixed
+- A streamed reply no longer closes its connection. llama-server ends each stream by returning
+  false after `sink.done()`, and cpp-httplib took that as a cancelled response: it closed the
+  connection right after sending `Keep-Alive: timeout=5`. A client that reuses the connection at once
+  lost its next request. Open WebUI sends each tool-call continuation within a fraction of a second,
+  so agent chats stopped after their first tool call with "Server Connection Error". cpp-httplib now
+  ends a stream normally once its provider has called `done()` (`patches/0011`); a cancel or a
+  failed write still closes the connection. The patch is in cpp-httplib rather than llama-server's
+  provider because 0007 keeps that provider's last line as its context. `tests/test_stream_keepalive.py`
+  sends a second request after a stream, on cpp-httplib as shipped and as patched.
+
+### Tested on a PS5 Fat
+- Connection probes against the console, memfix4 then memfix5: a request on the connection right
+  after a streamed reply (closed 6 of 6, then ok 6 of 6), back-to-back requests (2 of 6 failed, then
+  8 of 8 ok), replies of 2.7-8 s each followed at once by another (7 of 16 failed, then 16 of 16 ok),
+  a cancelled stream and then a new request (4 of 6 failed, then 6 of 6 ok), a long request and a
+  follow-up 0.2 s later (7 of 8 failed, then 2 of 2 ok).
+- An agent chat in Open WebUI with Qwen 3.5 9B, 64k context: one turn ran 45+ tool calls in a sandbox
+  with no disconnect, where memfix4 stopped after the first, and Open WebUI's compaction fired in the
+  middle of it at about 47.8k tokens, after which the model carried on. Memory went from 0.66 GiB
+  free at load to 0.35 GiB at its lowest, the CPU heap stayed at about 2.1 GiB, and no out-of-memory
+  error was logged.
+
+## [0.9.1-memfix4] - 2026-10-29
+
+The fourth iteration of the memory fix, the first one released.
+
+### Fixed
+- A long chat no longer fills the memory and stops the model. Each request runs on another of
+  llama-server's HTTP threads, and the title heap (PS5_PayloadSDK's platform layer, eight arenas)
+  kept every arena at the largest request it had served, growing 16 MiB at a time; as a chat's
+  history grew toward 48k tokens, the last half GiB after loading filled request by request.
+  `patches/sdk` makes the heap give memory back: 2 MiB growth, a segment of its own for every
+  block from 1 MiB, and `ps5_heap_trim()`, which the app calls after each request and every idle
+  second. `scripts/build-app.sh` applies it to the platform layer and links that in place of the
+  SDK's. Each request's end now logs the pool and the heap to `app.log`
+  (`memory after request`). If the pool still falls under 0.04 GiB free while no request runs,
+  the app restarts with the same model instead of stopping during the next request. The planner
+  keeps 0.5 GiB free after loading when a cheaper cache (q4_0 for q8_0) buys it, never at the cost
+  of context; choose the cache in Settings to keep q8_0. The Home feed no longer parses a request's
+  image data. On the console (Qwen 3.5 9B with images, 64k, q8_0, one chat grown to 43k tokens)
+  the heap stayed at 2.11-2.16 GiB, while the pool still fell by about 0.37 GiB.
+- That rest was the GPU's: with a quantized cache, flash attention copies a layer's K and V to f16
+  in a Vulkan scratch sized to the context so far, replaced by a larger one as the chat grows, the
+  old one freed only later. `patches/0010` makes it once, at its largest, when the model loads
+  (`GGML_VK_PREALLOC_X`, set from the plan: 256 MiB for a 9B at 64k), for the model's context
+  only (an image encoder's context has no cache to copy), and the planner counts it. With it the
+  pool stayed within 0.02 GiB from 6k to 26k tokens. A restart keeps the last run's logs as
+  `app.prev.log` and `llama.prev.log`.
+
+### Added
+- `scripts/build-in-container.sh` builds the title in CI's pinned Debian container on any Docker
+  host (Colima with Rosetta on an Apple Silicon Mac), and `scripts/ps5lm-memtest.py` measures
+  memory over a long chat against a console.
+
+### Tested on a PS5 Fat
+- Qwen 3.5 9B Q4_K_M with its vision projector, 64k context, q8_0 cache: one chat grown to 48k
+  tokens over 42 turns with an image sent every turn, then six full reprocesses of the whole 48k
+  history. Every request was answered, the CPU heap stayed at 2.12-2.18 GiB and the pool at
+  0.19 GiB free. The original 0.9.1 stopped before 48k in the same use.
+
+### From upstream after 0.9.1
+cobanov/PS5LM's main after 0.9.1, not yet released there, is in every memfix build.
+
+#### Added
+- **An opt-in endpoint for the model's own numbers**: `POST /v1/introspect` answers with the whole
+  logit row at the positions you name, the top candidates with their probabilities, the entropy, and
+  one row of a named graph tensor (`l_out`, `ffn_swiglu`, `ffn_out`, `attn_out`, `attn_norm`, `ffn_norm`,
+  `result_norm`, `result_output`) for a named layer. A request can also change one channel in place,
+  with zero, scale or add, at one position or at all of them. `messages` applies the chat template
+  first. It is off by default: Settings > Developer > "Logits and activations API" (a change
+  restarts the app with the loaded model), or `LLAMA_INTROSPECT=1`. `docs/INTROSPECTION.md` is the
+  reference, `scripts/ps5lm-introspect.py` is a client, and `examples/interpret/neuron_ablation.py`
+  zeroes the FFN neurons (`ffn_swiglu`) of one layer one at a time.
+- The patch reads the logits from the context's own output buffer and copies the tensors out of the
+  compute graph with the eval callback that llama.cpp already has, so no work is repeated and no
+  request pays for it unless it asks.
+
+#### Fixed
+- Models saved to an M.2 or USB drive show up in the library wherever that drive is mounted. The
+  library looked only in `/mnt/ext0`, `/mnt/usb0` and `/mnt/usb1`, while downloads can go to any
+  drive the exporter reports; it now also reads the download folder and every mounted drive's
+  `PS5LM/models` (#43).
 
 ## [0.9.1] - 2026-10-20
 

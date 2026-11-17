@@ -57,6 +57,11 @@ ModelInfo read_model_info(const std::string & path);
 // the full-attention layers. Sliding-window layers add a fixed amount (plan_model).
 double kv_bytes_per_token(const ModelInfo & m, const std::string & type);
 
+// The Vulkan scratch flash attention takes for an f16 copy of one layer's K
+// and V when the cache is quantized (ggml-vulkan's prealloc_x), at a context
+// length: sized once at load (patches/0010), so every plan counts it.
+uint64_t fa_scratch_bytes(const ModelInfo & m, const std::string & type, uint32_t ctx);
+
 struct Preset {
     const char * match;      // case-insensitive substring of the file or model name
     const char * label;      // what the UI calls it
@@ -81,6 +86,7 @@ struct Plan {
     std::string kv_type;      // cache type for K and V
     double      weights_gib  = 0;
     double      kv_gib       = 0;
+    uint64_t    scratch_bytes = 0;  // GGML_VK_PREALLOC_X: flash attention's f16 copy of the cache
     double      state_gib    = 0;
     double      reserve_gib  = 0;   // compute buffers and the CPU side
     double      total_gib    = 0;

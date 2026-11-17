@@ -2,7 +2,7 @@
   <img src="ps5/app/sce_sys/icon0.png" width="128" alt="PS5LM">
 </p>
 
-<h1 align="center">PS5LM</h1>
+<h1 align="center">PS5LM-memfix</h1>
 
 <p align="center">
   <b>Your PS5 runs the language model. Every device on your network uses it.</b><br>
@@ -10,11 +10,34 @@
 </p>
 
 <p align="center">
-  <b><a href="https://github.com/cobanov/PS5LM/releases/latest">Get the app</a></b> ·
+  <b><a href="https://github.com/MCsumz/PS5LM-memfix/releases/latest">Get the memfix build</a></b> ·
+  <a href="https://github.com/cobanov/PS5LM">Original PS5LM</a> ·
   <a href="https://ps5lm.cobanov.dev">Website</a> ·
-  <a href="#try-it">Get started</a> ·
-  <a href="https://github.com/cobanov/PS5LM/issues">Issues</a>
+  <a href="#try-it">Get started</a>
 </p>
+
+> [!IMPORTANT]
+> **This is a modified build of [cobanov/PS5LM](https://github.com/cobanov/PS5LM) 0.11.0 (memfix8)
+> for long chats and agent use from OpenWebUI**, tested on a PS5 Fat:
+> - **Memory:** a long chat no longer fills the pool about 0.1 GB at a time until the model stops
+>   (`patches/sdk`, `patches/0010`).
+> - **Connections:** a streamed reply keeps its keep-alive connection, so OpenWebUI's tool-call
+>   continuations no longer fail with "Server Connection Error" (`patches/0011`).
+> - **Prompt cache:** a new message after an agent turn no longer reprocesses the whole turn
+>   (Qwen3.5 template, `patches/0012`): 4 s instead of minutes.
+> - **Media marker:** text that contains the server's image marker, such as `/props` read by a
+>   tool, no longer breaks the chat with "Failed to tokenize prompt" (`patches/0013`).
+>
+> **Measured with the setup it was made for:** `Qwen3.5-9B-Q4_K_M.gguf` with its vision module
+> `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache, from OpenWebUI with tools. On 0.11.0 the
+> title gets 12 GiB, and 0.75 GiB of the pool stayed free after a 47.9k-token prompt (0.9.1-memfix:
+> 0.35 GiB). On the original 0.9.1 the pool filled during a long chat and the model stopped before
+> 48k tokens.
+>
+> Details and measurements in the [CHANGELOG](CHANGELOG.md) and
+> [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1). Everything else is the original
+> PS5LM, and the rest of this README is the original's: report issues with these fixes here,
+> anything else [upstream](https://github.com/cobanov/PS5LM/issues).
 
 > **New: decision models, powered by [Ollaya](https://ollaya.dev).** PS5LM now runs Jev-like
 > decision models (d1, Clef, OpenJev and more) on the GPU and answers the same `/v1/systemone`
@@ -110,7 +133,8 @@ You need a PS5 on firmware 7.00 to 13.60, jailbroken, with these payloads loaded
 | [elfldr](https://github.com/ps5-payload-dev/elfldr) (port 9021) | temperature, power and real free space, through ps5-exporter; full-speed downloads, through the app's own ftpsrv | recommended |
 | [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (port 2121) | installing the app, copying models from a PC; downloads write through it when it runs | recommended |
 
-1. Download `ps5lm-app-vX.Y.Z.zip` from the [latest release](https://github.com/cobanov/PS5LM/releases/latest) and unzip it.
+1. Download `ps5lm-app-v0.11.0-memfixN.zip` from this fork's [latest release](https://github.com/MCsumz/PS5LM-memfix/releases/latest)
+   (or the original's `ps5lm-app-vX.Y.Z.zip` from [cobanov/PS5LM](https://github.com/cobanov/PS5LM/releases/latest)) and unzip it.
 2. Copy the `PPSA99575` folder to `/data/homebrew` over FTP. ShadowMountPlus adds **PS5LM** to the
    home screen.
 3. Open PS5LM, go to **Models > Suggested** and get a model. Or copy a `.gguf` to
