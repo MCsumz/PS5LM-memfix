@@ -20,19 +20,25 @@
 > **PS5LM-memfix** is [cobanov/PS5LM](https://github.com/cobanov/PS5LM) **0.11.0** with fixes for
 > long chats and agent use from Open WebUI. Current release: **memfix8**.
 >
-> | Fix | What changes | Patch |
-> |---|---|---|
-> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` |
-> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` |
-> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` |
-> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` |
+> | Fix | What changes | Patch | Upstream |
+> |---|---|---|---|
+> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` | Heap: [#75](https://github.com/cobanov/PS5LM/issues/75) · scratch: offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
+> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` | Offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
+> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` | ✅ Merged as [#88](https://github.com/cobanov/PS5LM/pull/88), in the next PS5LM release |
+> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` | Offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
+>
+> **Is this build for you?** If you run long chats or agents with tools (Open WebUI, opencode and
+> the like), yes. For short chats the original PS5LM is fine, and once a fix ships in an official
+> release you get it there too.
 >
 > **Tested on a PS5 Fat** with Qwen3.5 9B Q4_K_M and its Q8_0 vision module (64k context, q8_0
 > cache) from Open WebUI with tools: 0.75 GiB still free after a 47.9k-token prompt, and a follow-up
 > message after an agent turn in 4 s.
 >
-> **Planned:** testing other popular model families and extending the fixes to them where needed;
-> the prompt-cache fix covers Qwen3.5 only so far.
+> **Other models:** the prompt-cache fix covers Qwen3.5 only so far. If another model reprocesses
+> the whole chat on every message, post its name and `/data/PS5LM/llama.log` in
+> [cobanov/PS5LM#84](https://github.com/cobanov/PS5LM/issues/84), and I'll look for a fix for its
+> chat template.
 >
 > Details in the [CHANGELOG](CHANGELOG.md) and [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1).
 > Everything else, including the rest of this README, is the original PS5LM; report problems with it
