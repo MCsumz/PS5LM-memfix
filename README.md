@@ -35,10 +35,31 @@
 > cache) from Open WebUI with tools: 0.75 GiB still free after a 47.9k-token prompt, and a follow-up
 > message after an agent turn in 4 s.
 >
-> **Other models:** the prompt-cache fix covers Qwen3.5 only so far. If another model reprocesses
-> the whole chat on every message, post its name and `/data/PS5LM/llama.log` in
-> [cobanov/PS5LM#84](https://github.com/cobanov/PS5LM/issues/84), and I'll look for a fix for its
-> chat template.
+> **Other models (tested 21–22 November 2026, memfix8 on a PS5 Fat and a PS5 Pro):** 11 models,
+> each with the same short test: the chat template, speed, and an agent chat in Open WebUI with a
+> coding VM and network tools. No model reread its chat after an agent turn with Open WebUI.
+>
+> | Model | Console | Vision | Context, cache | Prompt / gen tok/s | Chat reread? | Agent work |
+> |---|---|---|---|---|---|---|
+> | Qwen 3.8 27B UD-Q2_K_XL | Pro | without | 32k, q4_0 | 153 / 28.4 | no | ✅ pass |
+> | Qwen 3.8 27B UD-IQ2_XXS | Pro | without | 64k, q8_0 | 66 / 20.1 | no | ✅ pass |
+> | Qwen 3.6 27B UD-IQ2_XXS | Pro | without | 64k, q4_0 | 78.3 / 23.1 | no | ✅ pass |
+> | Bonsai 2 27B Q2_0 | Fat | without | 64k, q8_0 | 109 / 16.4 | no | ✅ pass |
+> | Gemma 4 12B it IQ4_NL | Fat | with | 32k, q4_0 | 124.5 / 19.9 | no | ✅ pass |
+> | Ornith 1.5 9B Q4_K_M | Pro | without | 64k, q8_0 | 305 / 42.4 | no | ✅ pass |
+> | Granite 4.2 8B Q4_K_M | Pro | without | 64k, q4_0 | 200 / 22.9 | no | ✅ pass, slow |
+> | Gemma 4 E4B it Q4_0 | Pro | with | 64k, q8_0 | 526 / 73 | no | ⚠️ partial |
+> | Nemotron Nano 9B v2 Q4_K_M | Fat | without | 64k, q4_0 | 323 / 34.7 | no | ⚠️ partial |
+> | MiniCPM5 2B Q4_K_M | Fat | without | 64k, q8_0 | 481 / 116 | no | ⚠️ partial |
+> | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | only for clients that send thinking back | ❌ fail |
+> | Qwen 3.5 0.8B Q4_K_M | Fat | without | 64k, q8_0 | 3,516 / 206 | no | ❌ fail |
+>
+> Qwen 3.8 27B with a vision module does not fit, even on the Pro. Full results and method in
+> [docs/MODEL-TESTS.md](docs/MODEL-TESTS.md), short version in
+> [docs/MODEL-TESTS-SUMMARY.md](docs/MODEL-TESTS-SUMMARY.md); the test is
+> `scripts/ps5lm-modeltest.py`. If another model reprocesses the whole chat on every message, post
+> its name and `/data/PS5LM/llama.log` in
+> [cobanov/PS5LM#84](https://github.com/cobanov/PS5LM/issues/84).
 >
 > Details in the [CHANGELOG](CHANGELOG.md) and [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1).
 > Everything else, including the rest of this README, is the original PS5LM; report problems with it
