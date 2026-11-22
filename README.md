@@ -54,7 +54,8 @@
 > | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | only for clients that send thinking back | ❌ fail |
 > | Qwen 3.5 0.8B Q4_K_M | Fat | without | 64k, q8_0 | 3,516 / 206 | no | ❌ fail |
 >
-> Qwen 3.8 27B with a vision module does not fit, even on the Pro. Full results and method in
+> Qwen 3.8 27B with its vision module does not fit in the app's plan, even on the Pro (it can run
+> by hand at a small context with the screen off, see [cobanov/PS5LM#75](https://github.com/cobanov/PS5LM/issues/75)). Full results and method in
 > [docs/MODEL-TESTS.md](docs/MODEL-TESTS.md), short version in
 > [docs/MODEL-TESTS-SUMMARY.md](docs/MODEL-TESTS-SUMMARY.md); the test is
 > `scripts/ps5lm-modeltest.py`. If another model reprocesses the whole chat on every message, post

@@ -65,8 +65,10 @@ November 2026: 11 models in 12 runs, 5 on the Fat and 7 on the Pro, 3 of them wi
   4. MiniCPM-V 4.7 1B's template rereads agent turns for clients that send thinking back (above).
 - **Qwen 3.8 27B** (11 November file) fits text only: 32k with a q4_0 cache (Q2_K_XL) or 64k with
   a q8_0 cache (IQ2_XXS) on the Pro. The Fat has the same 12 GiB pool and build, so both should fit
-  there too once the wrong projector is not paired (not tried). With its own vision module it does
-  not fit, even on the Pro.
+  there too once the wrong projector is not paired (not tried). With its own vision module the
+  app's plan does not fit it, even on the Pro (screen on, the planner choosing the context). It can
+  run outside that plan: in [cobanov/PS5LM#75](https://github.com/cobanov/PS5LM/issues/75) it serves full-size photos with the F16 projector at a 2k context
+  set by hand, screen off, with heap and warm-up fixes.
 
 ## Method
 
@@ -114,9 +116,9 @@ either asked again or said so.
 | MiniCPM5 2B Q4_K_M | Fat | without | 64k, q8_0, 3.7 of 11.6 GiB | 47 s | 481 / 116 | consistent by itself; prefix 100 % both clients; empty blocks rendered | 0 of 6 | partial: first turn passes, then fails |
 | Nemotron Nano 9B v2 Q4_K_M | Fat | without | 64k, q4_0, 11.0 of 11.6 GiB planned | 72 s | 323 / 34.7 | strips thinking always; prefix 98.9 % both clients | 0 of 6 | partial: avoids the security tools |
 | Gemma 4 12B it IQ4_NL | Fat | **with** (`mmproj-gemma-4-12B-it-f16`) | 32k, q4_0, images: 10.0 of 11.6 GiB | 83 s | 124.5 / 19.9 | own switch (tool calls only); prefix 98.9 % both clients; no empty blocks | 0 of 6 (3 cut off by the test's limit while thinking) | pass |
-| Qwen 3.8 27B UD-Q2_K_XL (11 Nov file) | Fat | wrongly paired with the 9B's | does not fit | | | own switch (as Bonsai) | | not run |
+| Qwen 3.8 27B UD-Q2_K_XL (11 Nov file) | Fat | wrongly paired with the 9B's | does not fit in the app's plan | | | own switch (as Bonsai) | | not run |
 | Qwen 3.8 27B UD-Q2_K_XL (11 Nov file) | **Pro** | without | 32k, q4_0, 11.0 of 11.6 GiB | 109 s | 153 / 28.4 | own switch; prefix 100 % both clients; empty blocks rendered | 0 of 6 | pass |
-| Qwen 3.8 27B UD-Q2_K_XL (11 Nov file) | **Pro** | **with** its own (`mmproj-F16`, 0.93 GB) | does not fit | | | | | not run |
+| Qwen 3.8 27B UD-Q2_K_XL (11 Nov file) | **Pro** | **with** its own (`mmproj-F16`, 0.93 GB) | does not fit in the app's plan | | | | | not run |
 | Qwen 3.8 27B UD-IQ2_XXS | **Pro** | without | 64k, q8_0, 10.1 of 11.6 GiB | 81 s | 66 / 20.1 | own switch; prefix 100 % both clients; empty blocks rendered | 0 of 6 | pass |
 | Qwen 3.6 27B UD-IQ2_XXS | **Pro** | without | 64k, q4_0, 11.2 of 11.6 GiB | 103 s | 78.3 / 23.1 | own switch; prefix 100 % both clients; empty blocks rendered | 0 of 6 (2 cut off by the test's limit while thinking) | pass |
 | Ornith 1.5 9B Q4_K_M | **Pro** | without | 64k, q8_0, 7.5 of 11.6 GiB | 63 s | 305 / 42.4 | own switch; prefix 100 % both clients; empty blocks rendered | 1 of 6 (model's own) | pass |
@@ -231,7 +233,8 @@ ran without images. A check that the projector's `clip.vision.projection_dim` eq
   version is exposed, and stopped the tools; a plain follow-up answered without tools. Follow-ups
   processed 1.4k to 1.6k tokens.
 
-**Pro, with its own vision module: does not fit.** unsloth's `mmproj-F16.gguf` (0.93 GB,
+**Pro, with its own vision module: does not fit in the app's plan** (screen on, the planner choosing
+the context; [cobanov/PS5LM#75](https://github.com/cobanov/PS5LM/issues/75) runs it by hand at 2k with the screen off). unsloth's `mmproj-F16.gguf` (0.93 GB,
 `projection_dim` 5,120, renamed `Qwen3.8-27B.mmproj-F16.gguf` to be paired).
 
 ### Qwen 3.8 27B UD-IQ2_XXS (unsloth) · Pro · without vision

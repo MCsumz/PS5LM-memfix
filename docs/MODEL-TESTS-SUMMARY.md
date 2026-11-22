@@ -18,8 +18,8 @@ Short version of [MODEL-TESTS.md](MODEL-TESTS.md). PS5LM v0.11.0-memfix8 on a PS
 | MiniCPM5 2B Q4_K_M | Fat | without | 64k, q8_0 | 481 / 116 | no (consistent template) | partial |
 | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | **yes, if the client sends thinking back** (not with Open WebUI) | fail |
 | Qwen 3.5 0.8B Q4_K_M | Fat | without | 64k, q8_0 | 3,516 / 206 | no (`patches/0012`) | fail |
-| Qwen 3.8 27B UD-Q2_K_XL | Fat | wrong one paired | does not fit | | | not run |
-| Qwen 3.8 27B UD-Q2_K_XL | Pro | with its own | does not fit | | | not run |
+| Qwen 3.8 27B UD-Q2_K_XL | Fat | wrong one paired | does not fit in the app's plan | | | not run |
+| Qwen 3.8 27B UD-Q2_K_XL | Pro | with its own | does not fit in the app's plan | | | not run |
 
 - **The Qwen3.5 fix holds; nothing needed changing for Open WebUI.** No model reread its chat after
   an agent turn there (follow-ups read 116 to 208 new tokens). Without keeping earlier thinking,
