@@ -22,10 +22,14 @@
 >
 > | Fix | What changes | Patch | Upstream |
 > |---|---|---|---|
-> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` | Heap: [#75](https://github.com/cobanov/PS5LM/issues/75) · scratch: offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
-> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` | Offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
-> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` | ✅ Merged as [#88](https://github.com/cobanov/PS5LM/pull/88), in the next PS5LM release |
-> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` | Offered in [#98](https://github.com/cobanov/PS5LM/issues/98) |
+> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` | Heap: ✅ on `main` as [#110](https://github.com/cobanov/PS5LM/pull/110) (Adon1s) · scratch: next, from [#98](https://github.com/cobanov/PS5LM/issues/98) |
+> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` | ✅ on `main` with the llama.cpp move ([#103](https://github.com/cobanov/PS5LM/pull/103)); test in [#113](https://github.com/cobanov/PS5LM/pull/113) |
+> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` | ✅ Merged as [#88](https://github.com/cobanov/PS5LM/pull/88) |
+> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` | ✅ Merged as [#112](https://github.com/cobanov/PS5LM/pull/112) |
+>
+> All but the scratch fix are on PS5LM `main` and ship with its next release (the latest is still
+> 0.11.0). Console checks of `main` and open PRs (27 November: #114, #117, the keep-alive fix on the
+> new llama.cpp) are in [docs/UPSTREAM-TESTS.md](docs/UPSTREAM-TESTS.md).
 >
 > **Is this build for you?** If you run long chats or agents with tools (Open WebUI, opencode and
 > the like), yes. For short chats the original PS5LM is fine, and once a fix ships in an official
