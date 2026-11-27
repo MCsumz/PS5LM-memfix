@@ -31,6 +31,14 @@
 > 0.11.0). Console checks of `main` and open PRs (27 November: #114, #117, the keep-alive fix on the
 > new llama.cpp) are in [docs/UPSTREAM-TESTS.md](docs/UPSTREAM-TESTS.md).
 >
+> **From the model tests below, upstream:** Suggested downloads pinned to their revision
+> ([#116](https://github.com/cobanov/PS5LM/pull/116), merged); a projector only for a model whose
+> width it fits ([#114](https://github.com/cobanov/PS5LM/pull/114)); hybrid models' KV cache counted
+> right ([#117](https://github.com/cobanov/PS5LM/pull/117), chukfinley); MiniCPM-V 4.7 keeps earlier
+> thinking ([#123](https://github.com/cobanov/PS5LM/pull/123)). Building `main` yourself? Turn
+> **File tools** off in Settings until [#122](https://github.com/cobanov/PS5LM/issues/122) is fixed,
+> or no model starts.
+>
 > **Is this build for you?** If you run long chats or agents with tools (Open WebUI, opencode and
 > the like), yes. For short chats the original PS5LM is fine, and once a fix ships in an official
 > release you get it there too.
@@ -45,7 +53,7 @@
 >
 > | Model | Console | Vision | Context, cache | Prompt / gen tok/s | Chat reread? | Agent work |
 > |---|---|---|---|---|---|---|
-> | Qwen 3.8 27B UD-Q2_K_XL | Pro | without | 32k, q4_0 | 153 / 28.4 | no | ✅ pass |
+> | Qwen 3.8 27B UD-Q2_K_XL | Pro | without | 32k, q4_0 (64k on `main`) | 153 / 28.4 | no | ✅ pass |
 > | Qwen 3.8 27B UD-IQ2_XXS | Pro | without | 64k, q8_0 | 66 / 20.1 | no | ✅ pass |
 > | Qwen 3.6 27B UD-IQ2_XXS | Pro | without | 64k, q4_0 | 78.3 / 23.1 | no | ✅ pass |
 > | Bonsai 2 27B Q2_0 | Fat | without | 64k, q8_0 | 109 / 16.4 | no | ✅ pass |
@@ -53,9 +61,9 @@
 > | Ornith 1.5 9B Q4_K_M | Pro | without | 64k, q8_0 | 305 / 42.4 | no | ✅ pass |
 > | Granite 4.2 8B Q4_K_M | Pro | without | 64k, q4_0 | 200 / 22.9 | no | ✅ pass, slow |
 > | Gemma 4 E4B it Q4_0 | Pro | with | 64k, q8_0 | 526 / 73 | no | ⚠️ partial |
-> | Nemotron Nano 9B v2 Q4_K_M | Fat | without | 64k, q4_0 | 323 / 34.7 | no | ⚠️ partial |
+> | Nemotron Nano 9B v2 Q4_K_M | Fat | without | 64k, q4_0 (q8_0 with #117) | 323 / 34.7 | no | ⚠️ partial |
 > | MiniCPM5 2B Q4_K_M | Fat | without | 64k, q8_0 | 481 / 116 | no | ⚠️ partial |
-> | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | only for clients that send thinking back | ❌ fail |
+> | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | only for clients that send thinking back (fix: #123) | ❌ fail |
 > | Qwen 3.5 0.8B Q4_K_M | Fat | without | 64k, q8_0 | 3,516 / 206 | no | ❌ fail |
 >
 > Qwen 3.8 27B with its vision module does not fit in the app's plan, even on the Pro (it can run
