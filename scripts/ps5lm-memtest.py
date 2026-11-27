@@ -12,6 +12,9 @@ console's FTP server answers, the memory line PS5LM wrote to app.log.
     python3 scripts/ps5lm-memtest.py <PS5 address> --ftp-port 2121
     python3 scripts/ps5lm-memtest.py <PS5 address> --ftp-port 2121 --image --target 48000 --reprocess 3
 
+On PS5LM main, turn the memory lines on first (scripts/ps5lm-app.sh memory each), after the model
+is ready: loading a model restarts the app, which turns them off again.
+
 Only standard Python 3. It sends chat requests to your own PS5 and reads its
 log; it changes nothing on the console.
 """
@@ -68,7 +71,12 @@ def post(base, body, timeout):
 
 
 def memory_line(host, port):
-    """The last 'memory after request' line of app.log over FTP, or None."""
+    """The last memory line after a request in app.log over FTP, or None.
+
+    memfix writes "memory after request"; PS5LM main (with the title heap, #110) writes
+    "memory after a request" and "memory after the trim" once `scripts/ps5lm-app.sh memory each`
+    (or the file /data/PS5LM/memory with "each") has turned them on, and the line after the trim
+    is the one that shows what the heap kept."""
     try:
         ftp = ftplib.FTP()
         ftp.connect(host, port, timeout=5)
@@ -78,7 +86,8 @@ def memory_line(host, port):
         ftp.quit()
     except Exception:
         return None
-    lines = [l for l in buf.getvalue().decode("utf-8", "replace").splitlines() if "memory after request" in l]
+    lines = [l for l in buf.getvalue().decode("utf-8", "replace").splitlines()
+             if any(k in l for k in ("memory after request", "memory after the trim", "memory after a request"))]
     return lines[-1] if lines else None
 
 
@@ -124,15 +133,20 @@ def main():
             return None
         secs = time.time() - t0
         tokens = reply.get("usage", {}).get("prompt_tokens", 0)
+        time.sleep(2)  # main trims 0.25 s after a request, then its log sink writes the line
         line = memory_line(args.host, args.ftp_port)
         mem = "n/a (no FTP; watch the memory on the TV's Home page)"
         if line:
-            m = re.search(r"pool free ([\d.]+) GiB, cpu heap ([\d.]+) GiB \(peak ([\d.]+)", line)
+            # memfix: "pool free X GiB, cpu heap Y GiB (peak Z"; main adds the flexible pool and "in use"
+            m = re.search(r"pool free ([\d.]+) GiB.*?cpu heap ([\d.]+) GiB \((?:in use [\d.]+, )?peak ([\d.]+)", line)
             if m:
                 free, heap, peak = map(float, m.groups())
                 if state["first_free"] is None:
                     state["first_free"] = free
                 mem = f"pool free {free:.2f} GiB ({free - state['first_free']:+.2f}), cpu heap {heap:.2f} GiB, peak {peak:.2f}"
+                big = re.search(r"largest (\d+)", line)  # main: the pool's largest free block, MiB
+                if big:
+                    mem += f", largest {big.group(1)} MiB"
             else:
                 mem = line.split("ps5lm-app: ")[-1]
         print(f"{label:>4} {tokens:>10} {secs:6.0f}  {mem}", flush=True)
