@@ -35,6 +35,14 @@ works too.
 For the automated, pinned-source Debian build and its validation limits, see
 [CI validation](CI.md). `scripts/test-native-build.sh` builds and statically checks
 the existing app without a console, model download, or proprietary firmware.
+`scripts/build-in-container.sh` runs it in CI's pinned Debian container on any Docker
+host, then packages again with the browser UI. On an Apple Silicon Mac, start
+[Colima](https://github.com/abiosoft/colima) with Rosetta for the amd64 image first:
+
+```sh
+colima start --vm-type vz --vz-rosetta --cpu 8 --memory 10 --disk 80
+scripts/build-in-container.sh      # build/app-ps5/title/PPSA99575
+```
 
 On Arch, the host packages (or run them in an `archlinux` container with the repository mounted):
 
@@ -88,6 +96,7 @@ scripts/preview-app-ui.sh                          # every screen to build/app-p
 PS5_HOST=<console IP> scripts/ps5lm-app.sh cycle   # close, deploy, launch; also close|deploy|launch
 PS5_HOST=<console IP> scripts/ps5lm-app.sh load /data/PS5LM/models/<file>.gguf
 PS5_HOST=<console IP> scripts/ps5lm-app.sh screenshot out.bmp
+scripts/ps5lm-memtest.py <console IP> --ftp-port 2121 --image --target 48000 --reprocess 3   # memory over a long chat
 ```
 
 - The app closes itself on request (`/data/PS5LM/quit`), so nothing is killed while it draws.
