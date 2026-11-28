@@ -10,11 +10,45 @@
 </p>
 
 <p align="center">
-  <b><a href="https://github.com/cobanov/PS5LM/releases/latest">Get the app</a></b> ·
+  <b><a href="https://github.com/MCsumz/PS5LM-memfix/releases/latest">Get the memfix build</a></b> ·
+  <a href="https://github.com/cobanov/PS5LM">Original PS5LM</a> ·
   <a href="https://ps5lm.cobanov.dev">Website</a> ·
-  <a href="#try-it">Get started</a> ·
-  <a href="https://github.com/cobanov/PS5LM/issues">Issues</a>
+  <a href="#try-it">Get started</a>
 </p>
+
+> [!IMPORTANT]
+> **PS5LM-memfix** is [cobanov/PS5LM](https://github.com/cobanov/PS5LM) `main` (5e96235, after
+> 0.11.0) with the fixes that are not in a PS5LM release yet. Current release: **memfix9**.
+>
+> | Fix | What changes | Upstream |
+> |---|---|---|
+> | Memory | The title heap gives freed memory back, so long chats and photo runs stay level | ✅ [#110](https://github.com/cobanov/PS5LM/pull/110) on `main` |
+> | Connections | Tool calls no longer end in "Server Connection Error" | ✅ with the llama.cpp move ([#103](https://github.com/cobanov/PS5LM/pull/103)); test: [#113](https://github.com/cobanov/PS5LM/pull/113) |
+> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | ✅ [#88](https://github.com/cobanov/PS5LM/pull/88) |
+> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | ✅ [#112](https://github.com/cobanov/PS5LM/pull/112) |
+> | Projector pairing | A model gets only a vision projector that fits it; Qwen 3.8 27B fits on the Fat again (64k, q4_0) | [#114](https://github.com/cobanov/PS5LM/pull/114) |
+> | Hybrid models | Only layers with KV heads keep a cache: Nemotron Nano 9B v2 plans 64k q8_0 in 7.6 GiB (was q4_0 in 11.0) | [#117](https://github.com/cobanov/PS5LM/pull/117) (chukfinley) |
+> | MiniCPM-V 4.7 | Keeps earlier thinking: 99.3 % of an agent turn stays cached for clients that send it back (was 8.7 %) | [#123](https://github.com/cobanov/PS5LM/pull/123) |
+> | File tools | llama-server starts again with File tools on (the default) | fix for [#122](https://github.com/cobanov/PS5LM/issues/122) |
+> | Mac host build | `scripts/build-fleet-host.sh` links on macOS | [#124](https://github.com/cobanov/PS5LM/pull/124) |
+>
+> From `main` since 0.11.0 it also has llama.cpp d2bceda3d (Inkling 2 Mini), the 256 MiB flexible
+> pool (Qwen 3.8 27B UD-Q2_K_XL now at 64k on the Pro) and Suggested downloads pinned to their
+> revision. memfix8's `prealloc_x` fix is not in memfix9: it still has to be ported to the new
+> llama.cpp and tested. Long chats on `main` stayed level without it.
+>
+> **Tested on a PS5 Fat and a PS5 Pro** (27 November 2026), each part on the console: 48k-token
+> chats with 3 full reprocesses (Qwen3.5-9B with an image every turn on the Fat, 0.31 GiB lost
+> over the chat; Qwen 3.8 27B on the Pro with 0.43 GiB still free), a fleet worker without its
+> screen, Open WebUI agent chats, and the plans above. Results in
+> [docs/UPSTREAM-TESTS.md](docs/UPSTREAM-TESTS.md); 11 models on memfix8 in
+> [docs/MODEL-TESTS.md](docs/MODEL-TESTS.md). memfix9 as a whole is built and statically checked
+> in CI's container.
+>
+> **Is this build for you?** If you run long chats or agents with tools (Open WebUI, opencode and
+> the like), or one of the models above, yes. Once these fixes ship in an official release, the
+> original PS5LM has them too. Everything else, including the rest of this README, is the original
+> PS5LM; report problems with it [upstream](https://github.com/cobanov/PS5LM/issues).
 
 > **New: decision models, powered by [Ollaya](https://ollaya.dev).** PS5LM now runs Jev-like
 > decision models (d1, Clef, OpenJev and more) on the GPU and answers the same `/v1/systemone`

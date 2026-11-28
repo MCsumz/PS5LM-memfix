@@ -5,6 +5,25 @@ Versions follow [semver](https://semver.org). The app's version is set in
 `v<version>` and ships `ps5lm-app-v<version>.zip` (see `scripts/release-app.sh`).
 v0.1.x are the upstream payload releases by cobanov.
 
+## [memfix9] - 2026-11-28
+
+PS5LM-memfix9 (this fork, [MCsumz/PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix)): PS5LM
+`main` 5e96235 with #113, #114, #117, #123 and #124 merged before upstream does, and one fix of its
+own. Their entries are in [Unreleased] below.
+
+- **File tools no longer stop llama-server from starting** (#122). Since the llama.cpp move
+  (d2bceda3d), llama-server refuses server tools on a network address without an API key, so with
+  File tools on (the default) every model load failed. The app now passes
+  `--allow-unauthenticated-tools` with `--tools`, unless an `app-args.txt` gives `--api-key`. The
+  tools stay confined to the scratch folder (`patches/0003`).
+- #117's Inkling 2 Mini entry carries its `revision` (8078d149), which #116 requires.
+- memfix8's `patches/0010` (flash attention's scratch made once at load) is not carried over: it
+  has to be ported to d2bceda3d and tested first. Everything else from memfix8 is in `main` now.
+- Console checks (27 November, PS5 Fat and Pro) in `docs/UPSTREAM-TESTS.md`; the model tests on
+  memfix8 in `docs/MODEL-TESTS.md`. `scripts/ps5lm-memtest.py` and `scripts/ps5lm-modeltest.py`
+  read main's memory lines; `scripts/build-in-container.sh` builds the title in CI's container on
+  any Docker host.
+
 ## [Unreleased]
 
 ### Added
