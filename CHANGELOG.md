@@ -333,6 +333,16 @@ v0.1.x are the upstream payload releases by cobanov.
   every layer counted as attention: Nemotron Nano 9B v2 (56 layers, 4 attention) got a 64k `q4_0`
   cache planned at about 3.9 GiB and no Mamba state. Now it is 64k `q8_0`, 0.53 GiB of cache and
   0.14 GiB of state. Pure Mamba files now count their state, and Falcon-H1 both.
+- **A test keeps a streamed reply's keep-alive connection in check.** Until the llama.cpp move,
+  llama-server's chunk provider called `done()` and then returned false, and cpp-httplib counted
+  that as a cancelled response: it closed the connection right after one that advertised
+  `Keep-Alive`, and Open WebUI agent chats stopped after their first tool call with "Server
+  Connection Error". The fix comes with the llama.cpp move (ggml-org/llama.cpp#30492).
+  `tests/server_stream_keepalive_test.py` guards it: two streams and a plain request over one
+  connection on chat, messages, responses and completion (upstream's test covers only
+  `/completion`). On the console (Qwen 3.8 27B, Open WebUI agent chat with tool calls), no
+  connection dropped. From @MCsumz's fork,
+  [PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix) (#98).
 - **A new message after a Qwen3.5 turn no longer processes the whole turn again** (#84). Qwen3.5's
   chat template renders an assistant message's thinking only after the last user message, so the
   next user message rendered the turn before it differently and the cache no longer matched: on the
