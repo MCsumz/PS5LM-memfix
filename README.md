@@ -2,7 +2,7 @@
   <img src="ps5/app/sce_sys/icon0.png" width="128" alt="PS5LM">
 </p>
 
-<h1 align="center">PS5LM-memfix</h1>
+<h1 align="center">PS5LM</h1>
 
 <p align="center">
   <b>Your PS5 runs the language model. Every device on your network uses it.</b><br>
@@ -17,66 +17,38 @@
 </p>
 
 > [!IMPORTANT]
-> **PS5LM-memfix** is [cobanov/PS5LM](https://github.com/cobanov/PS5LM) **0.11.0** with fixes for
-> long chats and agent use from Open WebUI. Current release: **memfix8**.
+> **PS5LM-memfix** is [cobanov/PS5LM](https://github.com/cobanov/PS5LM) `main` (5e96235, after
+> 0.11.0) with the fixes that are not in a PS5LM release yet. Current release: **memfix9**.
 >
-> | Fix | What changes | Patch | Upstream |
-> |---|---|---|---|
-> | Memory | Long chats no longer fill the memory until the model stops | `patches/sdk`, `0010` | Heap: ✅ on `main` as [#110](https://github.com/cobanov/PS5LM/pull/110) (Adon1s) · scratch: next, from [#98](https://github.com/cobanov/PS5LM/issues/98) |
-> | Connections | Tool calls no longer end in "Server Connection Error" | `0011` | ✅ on `main` with the llama.cpp move ([#103](https://github.com/cobanov/PS5LM/pull/103)); test in [#113](https://github.com/cobanov/PS5LM/pull/113) |
-> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | `0012` | ✅ Merged as [#88](https://github.com/cobanov/PS5LM/pull/88) |
-> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | `0013` | ✅ Merged as [#112](https://github.com/cobanov/PS5LM/pull/112) |
+> | Fix | What changes | Upstream |
+> |---|---|---|
+> | Memory | The title heap gives freed memory back, so long chats and photo runs stay level | ✅ [#110](https://github.com/cobanov/PS5LM/pull/110) on `main` |
+> | Connections | Tool calls no longer end in "Server Connection Error" | ✅ with the llama.cpp move ([#103](https://github.com/cobanov/PS5LM/pull/103)); test: [#113](https://github.com/cobanov/PS5LM/pull/113) |
+> | Prompt cache (Qwen3.5) | A follow-up message takes seconds, not minutes | ✅ [#88](https://github.com/cobanov/PS5LM/pull/88) |
+> | Media marker | Chats no longer fail with "Failed to tokenize prompt" | ✅ [#112](https://github.com/cobanov/PS5LM/pull/112) |
+> | Projector pairing | A model gets only a vision projector that fits it; Qwen 3.8 27B fits on the Fat again (64k, q4_0) | [#114](https://github.com/cobanov/PS5LM/pull/114) |
+> | Hybrid models | Only layers with KV heads keep a cache: Nemotron Nano 9B v2 plans 64k q8_0 in 7.6 GiB (was q4_0 in 11.0) | [#117](https://github.com/cobanov/PS5LM/pull/117) (chukfinley) |
+> | MiniCPM-V 4.7 | Keeps earlier thinking: 99.3 % of an agent turn stays cached for clients that send it back (was 8.7 %) | [#123](https://github.com/cobanov/PS5LM/pull/123) |
+> | File tools | llama-server starts again with File tools on (the default) | fix for [#122](https://github.com/cobanov/PS5LM/issues/122) |
+> | Mac host build | `scripts/build-fleet-host.sh` links on macOS | [#124](https://github.com/cobanov/PS5LM/pull/124) |
 >
-> All but the scratch fix are on PS5LM `main` and ship with its next release (the latest is still
-> 0.11.0). Console checks of `main` and open PRs (27 November: #114, #117, the keep-alive fix on the
-> new llama.cpp) are in [docs/UPSTREAM-TESTS.md](docs/UPSTREAM-TESTS.md).
+> From `main` since 0.11.0 it also has llama.cpp d2bceda3d (Inkling 2 Mini), the 256 MiB flexible
+> pool (Qwen 3.8 27B UD-Q2_K_XL now at 64k on the Pro) and Suggested downloads pinned to their
+> revision. memfix8's `prealloc_x` fix is not in memfix9: it still has to be ported to the new
+> llama.cpp and tested. Long chats on `main` stayed level without it.
 >
-> **From the model tests below, upstream:** Suggested downloads pinned to their revision
-> ([#116](https://github.com/cobanov/PS5LM/pull/116), merged); a projector only for a model whose
-> width it fits ([#114](https://github.com/cobanov/PS5LM/pull/114)); hybrid models' KV cache counted
-> right ([#117](https://github.com/cobanov/PS5LM/pull/117), chukfinley); MiniCPM-V 4.7 keeps earlier
-> thinking ([#123](https://github.com/cobanov/PS5LM/pull/123)). Building `main` yourself? Turn
-> **File tools** off in Settings until [#122](https://github.com/cobanov/PS5LM/issues/122) is fixed,
-> or no model starts.
+> **Tested on a PS5 Fat and a PS5 Pro** (27 November 2026), each part on the console: 48k-token
+> chats with 3 full reprocesses (Qwen3.5-9B with an image every turn on the Fat, 0.31 GiB lost
+> over the chat; Qwen 3.8 27B on the Pro with 0.43 GiB still free), a fleet worker without its
+> screen, Open WebUI agent chats, and the plans above. Results in
+> [docs/UPSTREAM-TESTS.md](docs/UPSTREAM-TESTS.md); 11 models on memfix8 in
+> [docs/MODEL-TESTS.md](docs/MODEL-TESTS.md). memfix9 as a whole is built and statically checked
+> in CI's container.
 >
 > **Is this build for you?** If you run long chats or agents with tools (Open WebUI, opencode and
-> the like), yes. For short chats the original PS5LM is fine, and once a fix ships in an official
-> release you get it there too.
->
-> **Tested on a PS5 Fat** with Qwen3.5 9B Q4_K_M and its Q8_0 vision module (64k context, q8_0
-> cache) from Open WebUI with tools: 0.75 GiB still free after a 47.9k-token prompt, and a follow-up
-> message after an agent turn in 4 s.
->
-> **Other models (tested 21–22 November 2026, memfix8 on a PS5 Fat and a PS5 Pro):** 11 models,
-> each with the same short test: the chat template, speed, and an agent chat in Open WebUI with a
-> coding VM and network tools. No model reread its chat after an agent turn with Open WebUI.
->
-> | Model | Console | Vision | Context, cache | Prompt / gen tok/s | Chat reread? | Agent work |
-> |---|---|---|---|---|---|---|
-> | Qwen 3.8 27B UD-Q2_K_XL | Pro | without | 32k, q4_0 (64k on `main`) | 153 / 28.4 | no | ✅ pass |
-> | Qwen 3.8 27B UD-IQ2_XXS | Pro | without | 64k, q8_0 | 66 / 20.1 | no | ✅ pass |
-> | Qwen 3.6 27B UD-IQ2_XXS | Pro | without | 64k, q4_0 | 78.3 / 23.1 | no | ✅ pass |
-> | Bonsai 2 27B Q2_0 | Fat | without | 64k, q8_0 | 109 / 16.4 | no | ✅ pass |
-> | Gemma 4 12B it IQ4_NL | Fat | with | 32k, q4_0 | 124.5 / 19.9 | no | ✅ pass |
-> | Ornith 1.5 9B Q4_K_M | Pro | without | 64k, q8_0 | 305 / 42.4 | no | ✅ pass |
-> | Granite 4.2 8B Q4_K_M | Pro | without | 64k, q4_0 | 200 / 22.9 | no | ✅ pass, slow |
-> | Gemma 4 E4B it Q4_0 | Pro | with | 64k, q8_0 | 526 / 73 | no | ⚠️ partial |
-> | Nemotron Nano 9B v2 Q4_K_M | Fat | without | 64k, q4_0 (q8_0 with #117) | 323 / 34.7 | no | ⚠️ partial |
-> | MiniCPM5 2B Q4_K_M | Fat | without | 64k, q8_0 | 481 / 116 | no | ⚠️ partial |
-> | MiniCPM-V 4.7 1B Q4_K_M | Pro | with | 64k, q8_0 | 5,200 / 237 | only for clients that send thinking back (fix: #123) | ❌ fail |
-> | Qwen 3.5 0.8B Q4_K_M | Fat | without | 64k, q8_0 | 3,516 / 206 | no | ❌ fail |
->
-> Qwen 3.8 27B with its vision module does not fit in the app's plan, even on the Pro (it can run
-> by hand at a small context with the screen off, see [cobanov/PS5LM#75](https://github.com/cobanov/PS5LM/issues/75)). Full results and method in
-> [docs/MODEL-TESTS.md](docs/MODEL-TESTS.md), short version in
-> [docs/MODEL-TESTS-SUMMARY.md](docs/MODEL-TESTS-SUMMARY.md); the test is
-> `scripts/ps5lm-modeltest.py`. If another model reprocesses the whole chat on every message, post
-> its name and `/data/PS5LM/llama.log` in
-> [cobanov/PS5LM#84](https://github.com/cobanov/PS5LM/issues/84).
->
-> Details in the [CHANGELOG](CHANGELOG.md) and [pull request #1](https://github.com/MCsumz/PS5LM-memfix/pull/1).
-> Everything else, including the rest of this README, is the original PS5LM; report problems with it
-> [upstream](https://github.com/cobanov/PS5LM/issues).
+> the like), or one of the models above, yes. Once these fixes ship in an official release, the
+> original PS5LM has them too. Everything else, including the rest of this README, is the original
+> PS5LM; report problems with it [upstream](https://github.com/cobanov/PS5LM/issues).
 
 > **New: decision models, powered by [Ollaya](https://ollaya.dev).** PS5LM now runs Jev-like
 > decision models (d1, Clef, OpenJev and more) on the GPU and answers the same `/v1/systemone`
@@ -162,7 +134,9 @@ decision metadata loads the same way, and the app labels it a decision model.
 
 ## Try it
 
-You need a PS5 on firmware 7.00 to 13.60, jailbroken, with these payloads loaded:
+You need a PS5 on firmware 7.00 to 13.60 (also reported working on 5.50,
+[#37](https://github.com/cobanov/PS5LM/issues/37); older firmware is untested), jailbroken, with
+these payloads loaded:
 
 | Payload | For | |
 |---|---|---|
@@ -172,8 +146,7 @@ You need a PS5 on firmware 7.00 to 13.60, jailbroken, with these payloads loaded
 | [elfldr](https://github.com/ps5-payload-dev/elfldr) (port 9021) | temperature, power and real free space, through ps5-exporter; full-speed downloads, through the app's own ftpsrv | recommended |
 | [ftpsrv](https://github.com/ps5-payload-dev/ftpsrv) (port 2121) | installing the app, copying models from a PC; downloads write through it when it runs | recommended |
 
-1. Download `ps5lm-app-v0.11.0-memfixN.zip` from this fork's [latest release](https://github.com/MCsumz/PS5LM-memfix/releases/latest)
-   (or the original's `ps5lm-app-vX.Y.Z.zip` from [cobanov/PS5LM](https://github.com/cobanov/PS5LM/releases/latest)) and unzip it.
+1. Download `ps5lm-app-vX.Y.Z.zip` from the [latest release](https://github.com/cobanov/PS5LM/releases/latest) and unzip it.
 2. Copy the `PPSA99575` folder to `/data/homebrew` over FTP. ShadowMountPlus adds **PS5LM** to the
    home screen.
 3. Open PS5LM, go to **Models > Suggested** and get a model. Or copy a `.gguf` to
@@ -257,17 +230,21 @@ ggml-vulkan on [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan)'s RADV, bui
 
 ## Experimental multi-console fleet
 
-[Fleet](docs/FLEET.md) splits one dense `llama`/`qwen2` GGUF across several
-consoles over llama.cpp's RPC, controlled by one PC: one model across their
-memory, not a copy on each, so a model too large for one PS5 can run on two or
-more. The PC can add its CPU or GPU as another worker. The worker is part of the
-app and starts only when `/data/PS5LM/fleet-worker.txt` asks for it (v0.10.0 had
-it in a separate `ps5lm-app-fleet` zip). Two-worker CPU inference is tested in
-CI, and a PS5 worker has served a model together with a PC's CPU, a Mac's GPU and an
-RTX 3090 (CUDA and Vulkan), but it is
-**experimental**: Qwen 3.8's `qwen35` layout is not admitted by
-this first planner yet, and RPC has no authentication, so it belongs on an
-isolated network you trust. See [validation and limits](docs/FLEET-VALIDATION.md).
+[Fleet](docs/FLEET.md) splits one GGUF across several consoles over llama.cpp's
+RPC, controlled by one PC: one model across their memory, not a copy on each, so
+a model too large for one PS5 can run on two or more. Qwen 3.5/3.6/3.8, Llama,
+Gemma and gpt-oss all split, and the PC can add its CPU or GPU as another worker.
+`python3 -m fleet control` (a page) and `python3 -m fleet ctl` (JSON, for scripts
+and agents) run many consoles and GPUs as pools of replicas behind one
+OpenAI-style API. A replica is a split, a console serving a model by itself, or a
+GPU. They find consoles on the network and move them in and out of worker mode.
+A 27B model has run with a 128k context over one PS5 and an RTX 3080. The worker is
+part of the app and starts only when `/data/PS5LM/fleet-worker.txt` asks for it
+(v0.10.0 had it in a separate `ps5lm-app-fleet` zip). Two-worker CPU inference is
+tested in CI, and a PS5 worker has served a model together with a PC's CPU, a
+Mac's GPU and an RTX 3090 (CUDA and Vulkan). It is still **experimental**: RPC has
+no authentication, so it belongs on an isolated network you trust. See
+[validation and limits](docs/FLEET-VALIDATION.md).
 
 ## Thanks
 

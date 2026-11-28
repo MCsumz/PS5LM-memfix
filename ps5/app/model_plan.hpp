@@ -29,17 +29,24 @@ struct ModelInfo {
     uint32_t    key_length      = 0;   // per KV head
     uint32_t    value_length    = 0;
     uint32_t    full_attn_every = 1;   // 1: every layer is attention
+    uint32_t    n_attn_layers   = 0;   // layers with a KV cache, when the file lists them per layer; 0: by full_attn_every
     uint32_t    n_swa_layers    = 0;   // attention layers that keep only a sliding window
     uint32_t    swa_window      = 0;   // that window, in tokens
     uint32_t    n_ctx_train     = 0;
     uint32_t    n_expert        = 0;   // 0: dense
     uint64_t    state_bytes     = 0;   // recurrent state, all layers (f32)
+    uint32_t    n_embd          = 0;   // embedding_length: the width a projector must feed
+    uint32_t    projection_dim  = 0;   // a projector's output width (clip.vision/audio.projection_dim), 0: unknown
+    double      bias_bytes      = 0;   // attention bias buffers, per context token and ubatch token
     std::string mmproj;                // a vision projector beside the model, or empty
     uint64_t    mmproj_bytes    = 0;
+    std::string projector_type;        // clip.projector_type: the projector's own, or the paired one's
     bool        ok              = false;
     std::string error;
 
-    uint32_t n_kv_layers() const { return full_attn_every > 1 ? n_layer / full_attn_every : n_layer; }
+    uint32_t n_kv_layers() const {
+        return n_attn_layers ? n_attn_layers : full_attn_every > 1 ? n_layer / full_attn_every : n_layer;
+    }
 };
 
 // Reads the metadata of a GGUF file (not its tensors).
@@ -48,19 +55,16 @@ struct ModelInfo {
 // Fetch enough to hold the metadata (16 MiB covers large vocabularies).
 ModelInfo read_model_header(const std::string & name, const std::string & head, uint64_t file_bytes);
 
-// The vision projector ("mmproj") beside a model, or empty.
-std::string find_mmproj(const std::string & model_path);
+// The vision projector ("mmproj") beside a model, or empty. With the model's
+// width (n_embd), a projector whose header gives another output width is passed
+// over for the next-best name.
+std::string find_mmproj(const std::string & model_path, uint32_t n_embd = 0);
 
 ModelInfo read_model_info(const std::string & path);
 
 // Bytes of KV cache per token of context, for a cache type ("f16", "q8_0", "q4_0"):
 // the full-attention layers. Sliding-window layers add a fixed amount (plan_model).
 double kv_bytes_per_token(const ModelInfo & m, const std::string & type);
-
-// The Vulkan scratch flash attention takes for an f16 copy of one layer's K
-// and V when the cache is quantized (ggml-vulkan's prealloc_x), at a context
-// length: sized once at load (patches/0010), so every plan counts it.
-uint64_t fa_scratch_bytes(const ModelInfo & m, const std::string & type, uint32_t ctx);
 
 struct Preset {
     const char * match;      // case-insensitive substring of the file or model name
@@ -79,6 +83,20 @@ const Preset * find_preset(const ModelInfo & m);
 // image encoders take 2048 whatever this says (a whole prompt or image in one).
 constexpr uint32_t kPromptUbatch = 64;
 
+// Vision models whose image tokens go through the model causally (Qwen's
+// projectors) take an image in n_batch pieces, so they need no wide ubatch.
+// On the console Qwen 3.8 27B UD-IQ2_S with its F16 projector had 0.90 GiB
+// free when ready at -ub 1024 and 1.47 GiB at -ub 256, at the same speed and
+// with the same answers. They get this ubatch, and a 1280-token batch and
+// image cap: a 1280x1261 photo goes in whole.
+constexpr uint32_t kVisionUbatch   = 256;
+constexpr uint32_t kVisionImageCap = 1280;
+
+// Whether a projector type takes its image causally: Qwen's mergers. Others
+// (Gemma's, for one) keep the wide ubatch, as llama.cpp needs their whole
+// image in one.
+bool causal_projector(const std::string & projector_type);
+
 struct Plan {
     bool        fits = false;
     uint32_t    ctx  = 0;
@@ -86,7 +104,6 @@ struct Plan {
     std::string kv_type;      // cache type for K and V
     double      weights_gib  = 0;
     double      kv_gib       = 0;
-    uint64_t    scratch_bytes = 0;  // GGML_VK_PREALLOC_X: flash attention's f16 copy of the cache
     double      state_gib    = 0;
     double      reserve_gib  = 0;   // compute buffers and the CPU side
     double      total_gib    = 0;

@@ -119,7 +119,7 @@ PS5LM's app (`ps5/app`, PPSA99575) is a title, not a payload: it gets the consol
 | Prompt | 35 to 50 tok/s |
 | Generation | 21 tok/s on a short prompt, 9 tok/s after the web UI's 371-token prompt |
 
-The pool is what `sceKernelGetDirectMemorySize()` returns, and `sce_sys/param.json` sets it. Up to v0.9.1 the app's file carried the `amm` block (`pagetableMemorySizeInMib` 256, 512 GiB address ranges) and the `kernel` block (256 MiB CPU and 256 MiB GPU page tables) of ps5-homebrew-ui's template, and the pool was 11.4375 GiB (12,280,922,112 bytes, from a user's log in #23). PS5_Vulkan's and PS5_RetroArch's titles declare no `amm` block and no page-table sizes and get 12 GiB (PS5_Vulkan measured on system software 6.02 to 12.70, PS5_RetroArch's probe on 12.09); that probe mapped an 11.875 GiB block from it and touched every word, so the default page tables hold a pool-sized mapping. Neither the GL stack nor RADV calls an AMM function (only `sceKernelAllocateDirectMemory` and `sceKernelMapDirectMemory`). The blocks are gone since; the app logs the pool and the flexible memory at start (`memory at start` in `app.log`). Not yet measured on 13.60. The flexible pool (448 MiB, the system's default) is the other part of the title's budget: ProsperoEden declares 320 MiB in `kernel.flexibleMemorySize` and its direct pool grows by the 128 MiB; PS5LM keeps the default until `app.log` shows how much of it the app leaves free.
+The pool is what `sceKernelGetDirectMemorySize()` returns, and `sce_sys/param.json` sets it. Up to v0.9.1 the app's file carried the `amm` block (`pagetableMemorySizeInMib` 256, 512 GiB address ranges) and the `kernel` block (256 MiB CPU and 256 MiB GPU page tables) of ps5-homebrew-ui's template, and the pool was 11.4375 GiB (12,280,922,112 bytes, from a user's log in #23). PS5_Vulkan's and PS5_RetroArch's titles declare no `amm` block and no page-table sizes and get 12 GiB (PS5_Vulkan measured on system software 6.02 to 12.70, PS5_RetroArch's probe on 12.09); that probe mapped an 11.875 GiB block from it and touched every word, so the default page tables hold a pool-sized mapping. Neither the GL stack nor RADV calls an AMM function (only `sceKernelAllocateDirectMemory` and `sceKernelMapDirectMemory`). The blocks are gone since; the app logs the pool and the flexible memory at start (`memory at start` in `app.log`). Not yet measured on 13.60. The flexible pool is the other part of the title's budget, 448 MiB by default: ProsperoEden declares 320 MiB in `kernel.flexibleMemorySize`, and its direct pool grows by the 128 MiB. PS5LM declares 256 MiB, and its direct pool is 12.1875 GiB instead of 12. The app's own CPU heap is in the direct pool; the flexible pool holds what libc and the system libraries take. On 11.60 (2026-11-11), 148 MiB of it was free at start, 132 MiB with a fleet worker running, and 111 MiB with the app serving a model with its screen (5.28 GiB of the direct pool still free). The pool follows `param.json` only when the title starts from the home screen: a restart for a model (LoadExec) keeps the pool the title started with.
 
 What a title has to do differently from a payload, each found by a crash:
 
@@ -162,7 +162,17 @@ from a drive instead of holding them in memory (Qwen3.8-Flash-Next on the roadma
 | `bench-read <model file>` | Sequential reads (8 MiB, up to 2 GiB), then three seconds each of random reads of 64 KiB, 256 KiB, 1 MiB and 4 MiB with one and four threads, through the cache and with `O_DIRECT`: MB/s, reads a second, median and p99 latency |
 | `bench-memory` | The direct pool and what the system keeps of a nominal 12 GiB, its largest free block, the flexible pool; with no model loaded, also the largest block that allocates and maps, given back at once |
 | `bench-write` | Write speed by method to the data folder and a USB drive |
+| `bench-park [GiB]` | The write path of parked state ([FLEET.md](FLEET.md#parked-state)), sustained: that many GiB (4) in 8 MiB pieces through ftpsrv to the data folder, `/mnt/usb0` and `/mnt/ext0`, the speed of every GiB, then read back in 8 MiB reads and checked; on the two drives also the title's own writes. Works beside a running worker |
 | `memory` | One `memory asked` line: pools, CPU heap and ggml's devices |
+| `memory each` / `memory off` | A `memory after a request` line after every request, and `memory after the trim` after its heap trim; or no more |
+| `trim` | Trims the heap now, between a `memory before trim` and a `memory after trim` line |
+| `trim on` / `trim off` | The heap trim 0.25 s after each request and every 10 s (on by default) |
+
+The memory line ends with exact figures, for example `[MiB: largest 1843, heap 973 in 412 segments, in use 920,
+walk 2.1 ms, trim 0.4 ms, requests 12, in flight 0]`: the largest free block of the direct pool, the CPU heap's
+mapped direct memory and in how many segments, what of it is in blocks handed out, and llama-server's POST requests
+ended and in flight. The heap is the payload SDK's with [`patches/sdk`](../patches/sdk/README.md); its trim hands
+segments with nothing left in them back to the pool the GPU shares.
 
 Point `bench-read` at a model of several GiB on the drive in question (internal storage, the M.2
 drive or USB), so the cache holds little of it; the `O_DIRECT` lines are the drive itself.

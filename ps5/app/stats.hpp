@@ -160,9 +160,6 @@ std::vector<Drive> drives_from_metrics(const std::string & text);
 bool send_payload(const char * path, int port);
 // Where llama-server's request hooks (activity.cpp) report.
 void set_activity_sink(StatsCollector * stats);
-// At a request's end: the heap's free segments go back to the pool, and one
-// line in app.log says where the memory is, so a pool that fills shows there.
-void memory_after_request(int id);
 
 std::string local_address();
 

@@ -3,33 +3,426 @@
 Versions follow [semver](https://semver.org). The app's version is set in
 `ps5/app/version.hpp` and shown on the dashboard; each release is tagged
 `v<version>` and ships `ps5lm-app-v<version>.zip` (see `scripts/release-app.sh`).
-v0.1.x are the upstream payload releases by cobanov. The `-memfixN` releases are this fork's
-(PS5LM-memfix): upstream releases with memory and connection fixes, tagged `v<version>-memfixN` and
-shipped as `ps5lm-app-v<version>-memfixN.zip`. The app calls itself by the upstream version.
+v0.1.x are the upstream payload releases by cobanov.
 
-## [0.11.0-memfix8] - 2026-11-17
+## [memfix9] - 2026-11-28
 
-memfix8's fixes carried onto upstream 0.11.0: the same patches, `patches/0011` to `0013` and
-`patches/sdk`, with `0013` re-based on 0.11.0's `server-common.cpp`. `patches/0010` and the app's
-memory changes come along as well. The app calls itself 0.11.0.
+PS5LM-memfix9 (this fork, [MCsumz/PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix)): PS5LM
+`main` 5e96235 with #113, #114, #117, #123 and #124 merged before upstream does, and one fix of its
+own. Their entries are in [Unreleased] below.
+
+- **File tools no longer stop llama-server from starting** (#122). Since the llama.cpp move
+  (d2bceda3d), llama-server refuses server tools on a network address without an API key, so with
+  File tools on (the default) every model load failed. The app now passes
+  `--allow-unauthenticated-tools` with `--tools`, unless an `app-args.txt` gives `--api-key`. The
+  tools stay confined to the scratch folder (`patches/0003`).
+- #117's Inkling 2 Mini entry carries its `revision` (8078d149), which #116 requires.
+- memfix8's `patches/0010` (flash attention's scratch made once at load) is not carried over: it
+  has to be ported to d2bceda3d and tested first. Everything else from memfix8 is in `main` now.
+- Console checks (27 November, PS5 Fat and Pro) in `docs/UPSTREAM-TESTS.md`; the model tests on
+  memfix8 in `docs/MODEL-TESTS.md`. `scripts/ps5lm-memtest.py` and `scripts/ps5lm-modeltest.py`
+  read main's memory lines; `scripts/build-in-container.sh` builds the title in CI's container on
+  any Docker host.
+
+## [Unreleased]
+
+### Added
+- **Inkling 2 Mini** (Thinking Machines' looped MoE, 26B with 3.4B active) in Suggested, as
+  Unsloth's `UD-Q2_K_XL` from `Mainline_Support` (upstream llama.cpp cannot read the files in
+  the repository root, which use Unsloth's fork layout). The planner counts its cache slots:
+  layers 6 to 17 run three times a token, each pass with its own KV and conv state, so 48
+  slots, 8 of them full attention and 40 sliding window. Its relative position bias adds about
+  208 bytes of compute buffer per context and ubatch token (832 MiB at 64k, `-ub 64`, measured
+  with ggml-vulkan). At 11.38 GiB that is a 64k `q8_0` cache, 11.24 GiB planned. Checked on a PC
+  with ggml-vulkan and the patched tree: it answers correctly.
+- **A fleet worker leaves worker mode on request**: a `/data/PS5LM/leave-worker` file
+  makes it delete `fleet-worker.txt` and restart as the app, the way a model change
+  restarts it. Before, a worker could only quit, and someone had to open PS5LM again
+  on the console.
+- **The fleet splits modern models.** Any single-file model the pinned llama.cpp
+  loads as one stack of blocks is admitted. That includes Qwen 3.5/3.6/3.8 (hybrid
+  Gated DeltaNet, dense and MoE), Llama 3.1+, Gemma 3/4 and gpt-oss, in all 35
+  ggml tensor types. Before, only dense `llama` and `qwen2` were admitted.
+  - The estimator now follows llama.cpp's placement and caches: recurrent state,
+    NextN blocks, sliding windows (listed in the file or llama.cpp's own pattern),
+    shared KV, widened V rows without flash attention, and RoPE and layer-0
+    tensors.
+  - It matched `llama-fit-params --fit-print` within 1 MiB on every device for
+    nine models at 4k and 32k. Qwen 3.5 and Gemma 3 split over two RPC workers
+    gave the same greedy tokens as one worker (docs/FLEET.md).
+- Before llama-server starts, `fleet serve` checks the plan with llama.cpp itself:
+  `llama-fit-params --fit-print` against the live workers, compute buffers
+  included. It refuses a worker that would come within 256 MiB of its budget, or
+  an eighth of a smaller budget.
+  `scripts/build-fleet-host.sh` builds `llama-fit-params`.
+- **`python3 -m fleet control`** runs a fleet of any size from one JSON
+  configuration: devices (consoles, this PC's GPUs, other RPC servers), and pools.
+  A pool is one model with its context, slots and cache. Its replicas are layer
+  splits, single consoles that serve the model with PS5LM itself, local GPUs, or
+  servers elsewhere.
+  - **One API** for every pool on port 8081 (OpenAI and Anthropic routes,
+    streaming, an optional key). The request's `model` picks the pool, and the
+    least busy replica gets it.
+  - **Running pools stay up.** It starts their replicas (making consoles workers
+    and starting the GPU's RPC worker as needed) and watches every device and
+    replica. It restarts what fails, with back-off.
+  - **Consoles are switched over the network**: found with the PlayStation
+    discovery protocol (also from WSL), and put in or out of worker mode over FTP.
+  - **`python3 -m fleet ctl`**: the same from a shell or an agent, as JSON:
+    `status`, `pool add --auto`, `pool start --wait`, `device leave`, and
+    `config` / `apply` for the whole configuration.
+  - **A console's worker settings**, on the page or with `ctl device set`:
+    `screen` (off by default, about 350 MiB more for the model) and `cache_gib`
+    (0 by default, no cache, as in the app; set, the GiB of weights its worker
+    keeps, so a reload reads them on the console: 32 holds a 27B model's share).
+    They go into its env.txt; a change restarts an idle worker, and one
+    in use takes it at its next restart. The page shows what each cache holds.
+    New actions: **restart** (a worker as a worker, with its settings) and
+    **clear-cache**.
+  - Consoles keep back 512 MiB for llama.cpp's compute buffers by default, GPUs
+    and RPC servers 1024.
+  - A split restarts its consoles' workers before it loads: the console's driver
+    keeps memory an earlier host allocated, and a second load ran out of it. The
+    watcher does not probe a console while a split on it starts.
+  - Splits sample on the worker with the output layer (`--backend-sampling`):
+    18.4 instead of 16.0 tokens/s for Qwen3.8-27B on a PS5 alone.
+  - A closed or crashed PS5LM is opened from the control server (`launch`, and
+    automatically by splits, `worker` and `restart`), through an ELF loader on
+    the console's port 9021 and PS5LM's launch payload.
+  - A version 1 `control.json` (one list of workers) becomes devices and a stopped
+    pool.
+  - **Who can use it:**
+    - The API is shared on the network (`api_lan`) only with an `api_key`; a
+      configuration without one is refused, when loaded and when changed.
+    - The API sends CORS headers only with a key set. Without one it sends
+      none, drops a replica's own, and refuses requests that carry another
+      site's `Origin`, so a page open in the browser cannot drive a keyless API.
+    - Behind `--allow-host`, the page and `ctl` change things only with a token
+      (`--token` or `$PS5LM_FLEET_TOKEN`; without one, a new token is printed
+      at each start). The page asks for it once; `ctl` takes `--token`. Both
+      also read it from a file that only you can read
+      (`~/.config/ps5lm-fleet/token`, or `--token-file`), so scripts that call
+      `ctl` need no variable.
+    - The launch payload comes from one folder (`build/app-ps5`, or
+      `--launcher-dir`): `launcher` picks a `.elf` in it, and only an ELF is
+      sent. A model given as a path is copied to a console only if it is a GGUF.
+    - A POST with a `Content-Length` that is not a number, negative or over
+      4 MiB is answered 413; a negative one used to wait on the connection.
+- **Long contexts in a split**:
+  - The planner and `fleet serve` take a quantized cache with flash attention
+    (`--cache-type q8_0 --flash-attn on`) and parallel slots, sized as llama.cpp
+    sizes them.
+  - Qwen3.8 27B (Q4_K_XL) ran with a 128k context, q4_0 cache, over one PS5 and an
+    RTX 3080. With a q8_0 cache, 80k fits.
+- Manual layer splits in the planner (`layer_counts`). A split can have one node.
+- **A fleet worker without its screen**: `PS5LM_WORKER_SCREEN=off` in `env.txt`
+  starts a worker without its screen and dashboard. That leaves about 350 MiB more
+  for the model: on a console the worker reported 12,217 MiB free instead of 11,854.
+- **A fleet worker restarts on request**: `/data/PS5LM/unload`, which restarts the
+  app, restarts a worker as a worker. It reads `env.txt` again, so its settings
+  change without anyone at the console.
+- A worker logs its memory once it has started, and when `/data/PS5LM/memory` is there.
+- **A fleet worker can keep the weights hosts send** (`PS5LM_RPC_CACHE_GB` in
+  `env.txt`, off by default): up to that many GiB in `/data/PS5LM/rpc-cache`, the
+  least recently used dropped first. A host loading the same weights again sends
+  only their hashes. On a console, Ornith 1.5 9B loaded in 17.6 s from the
+  cache against 48.9 s without it (its first load, saving the cache, took
+  113 s).
+  - `patches/fleet/0005`: a cache file is written whole under a temporary name,
+    used only when it hashes to what the host sent, and read in 8 MiB reads.
+    Before, a write cut short left a file that later loaded as the weights.
+  - The files are written through ftpsrv: a title's own writes slow to about
+    1.2 MB/s after 2 GB.
+- **Parked state stays on the console** (`PS5LM_PARK_GB` in `env.txt`, 128 GiB
+  unless set, 0 for off; `--slot-park-path` on the host): a host that serves
+  many conversations on one slot parks the one leaving in files on the worker,
+  in `/data/PS5LM/park`, instead of fetching it into its own memory, and loads
+  it back from the console's storage. `POST /slots/N?action=save|restore` with
+  the conversation's name; `park-list`, `park-delete`, `park-status`
+  ([FLEET.md](docs/FLEET.md#parked-state)). On a console serving Qwen3.8-27B
+  a 153K-token conversation came back in 4.6 s (65 s through the host prompt
+  cache) and a hand-over's save took 2.2 s.
+  - A save writes only what was added: the attention cells of the new tokens
+    and one recurrent state. For Qwen3.8-27B that is 18 MiB per 1,000 new tokens
+    plus 150 MiB, where the host prompt cache moved 2.8 GiB each way for a 153K
+    history. The host keeps 28 bytes a token.
+  - The worker drops the least recently used key when the folder is full, by
+    its own record of saves and restores (a console's file times do not move
+    when a key is read), and files are read with `read()` (the console's libc
+    reads an unbuffered stream a byte per call).
+  - `patches/fleet/0009`: park commands in the RPC worker, offered in its
+    handshake, every byte through one 8 MiB buffer, files whole or absent, the
+    folder kept to its size by dropping the key used longest ago.
+    `patches/0015`: a sequence's state in parts, the tensor data left on the
+    device. `patches/0016`: the server's side and its bookkeeping.
+  - A history changed before its parked end is rewritten from the change, never
+    resumed as it was; a save that dies half way leaves the one before loadable.
+  - `scripts/ps5lm-app.sh bench-park` measures the write path: sustained writes
+    through ftpsrv with the speed of every GiB.
+- **Large tensors go to a fleet worker in 8 MiB pieces** (`patches/fleet/0007`).
+  A worker took every tensor write, and built every answer to a read, in one
+  buffer of its size. A host that saved or restored a slot moved whole KV layers
+  that way, and every prompt batch sent an attention mask that grows with the
+  depth: a console serving Qwen3.8-27B with 60 MiB to spare died saving a
+  100K-token history. Split by the host, the same saves and restores ran to
+  153K tokens with the console's free memory unmoved. `GGML_RPC_CHUNK_MB` sets
+  the piece size (0 for off).
+
+- **A host keeps its idle connection to a worker alive** (`patches/fleet/0008`):
+  TCP keepalive on the RPC link, first probe after `GGML_RPC_KEEPALIVE_S`
+  seconds idle (60; 0 for off). A host behind a NAT (WSL2) lost the connection
+  after about half an hour without a request, and llama-server aborted on the
+  next one although the worker was fine.
 
 ### Changed
-- **Built on upstream 0.11.0** (llama.cpp b11827). The title gets 12 GiB of direct memory instead of
-  11.44, so the planner has 11.6 GiB for a model instead of 11.0; its prompt batch is 64.
+- **The app without its screen**: `PS5LM_SCREEN=off` in `env.txt` starts the app
+  without its screen and dashboard, as `PS5LM_WORKER_SCREEN=off` does for a fleet
+  worker. The server answers as before and the TV keeps the system's splash; the
+  controller does nothing, and the PC's request files (`load`, `unload`, `memory`,
+  `quit`) still work. The screen's memory goes to the model: on a PS5 with
+  Qwen3.8-27B UD-Q2_K_XL and its projector at 8k, 0.57 GiB free when ready instead
+  of 0.22.
+- **More memory for models**: `sce_sys/param.json` declares a 256 MiB flexible pool
+  (the system's default is 448 MiB), so the direct pool, where models go, is
+  12.1875 GiB instead of 12. It applies when the app starts from the home screen,
+  not when it restarts for a model.
+- **llama.cpp moves to d2bceda3d** (39 commits after b12602, 2026-11-22), 816 commits on from
+  b11827, for Inkling 2 Mini (`inkling2_loop`, ggml-org/llama.cpp 32694, and the fixes it needed on
+  a console: 32669, 32704, 32735, 32799). Proven on one PS5 with Qwen3.8-27B at 1 x 155,648 against
+  the build before it (same loads, parked conversations restored identically, writing 19.1 tokens a
+  second where it was 18.6, memory no lower), and Inkling 2 Mini runs on the console
+  ([FLEET.md](docs/FLEET.md#inkling-2-mini)).
+  - A host and a worker must both be on this pin. llama.cpp's RPC protocol went from 8 to
+    10 and a handshake between the two refuses, so a console and its host change together.
+  - Replies are not token for token what the old pin wrote: the same prompt diverges after a few
+    dozen tokens, greedy included (new attention kernels in ggml-vulkan).
+  - `patches/0011` (the KV cache's rotation matrices kept on its device) is gone: llama.cpp
+    does it itself (31073). `tests/server_kv_rotation_test.py` stays and holds llama.cpp to
+    it.
+  - `patches/0012` (the causal mask built on the KV cache's device) is written anew on
+    llama.cpp's `llm_attn_mask`. It now also covers the full-attention half of a
+    sliding-window model's cache (Gemma 3); a model whose attention has relative
+    positions (Inkling 2) makes a dense mask itself and keeps the host mask.
+  - The worker's handshake bits moved: llama.cpp took the byte they were in for flags of
+    its own, counted up from bit 0, so graph-free (`patches/fleet/0006`) is bit 6 and
+    parking (`patches/fleet/0009`) bit 7.
+  - `GGML_RPC_GRAPH_KEEP` (host, `patches/fleet/0006`): how many graphs the host leaves on a
+    worker for reuse, 8 by default. On this llama.cpp a 27B model's graph costs a console about
+    6.5 MiB (it was 4): with 8 a console at 1 x 155,648 settled at 41 MiB of free pool where it
+    had 61, with 1 it keeps 72 or more, at the same speed. A host that serves one slot should
+    set 1.
+  - `patches/fleet/0010`, new: an RPC device no longer claims flash attention over K/V
+    rows, which llama.cpp now uses for a unified KV cache when a device says it can. The
+    RPC device said yes for every op without asking its worker, and ggml-vulkan has no
+    such kernel, so a console would have been sent an op it cannot run.
+    `GGML_RPC_KV_ROWS=1` on the host offers it again.
+  - The other patches are re-based; `0016`, `fleet/0005`, `fleet/0007` and `fleet/0009`
+    with small changes for llama.cpp's reference-counted checkpoints and its new RPC
+    send path. `--defrag-thold` is gone from llama-server.
+  - Limits for Inkling 2 Mini: its state cannot be parked on the worker yet, and its context is
+    bounded by the batch size (108K at `--ubatch-size 128`, 352K at 8).
+- **A fleet host keeps sampling on the worker with a reasoning budget and with tools**
+  (`patches/0018`, host only): with `--backend-sampling` the worker samples and the
+  scores of the whole vocabulary stay there, 970 KiB a token for Qwen3.8-27B. A
+  reasoning budget or a tool-call grammar switched that off for the request ("backend
+  sampling is not compatible with reasoning budget, disabling"), and every agent
+  request has both: a PS5 wrote 16.3 tokens a second that way against 18.8 without
+  the budget. For such a request the worker now returns the top-k plus one candidate
+  and the host runs its chain, the budget and the grammar on those. The whole
+  vocabulary is fetched only for a token the budget forces, a token the grammar
+  rejects, and two equal scores among the candidates. The tokens are the ones host
+  sampling gives for the same seed. On a CPU worker with Qwen3.5-0.8B a token cost
+  184 bytes from the worker instead of 993,288, and 19,179 of 19,354 tokens of
+  budget-and-tools replies never needed more. It needs a top-k of at most 1024 as the
+  first active sampler (no logit bias or penalties before it), no mirostat, token
+  probabilities or speculative decoding; otherwise, and with
+  `LLAMA_BACKEND_SAMPLING_CHECKS=0`, a request is sampled on the host as before.
+  `LLAMA_BACKEND_SAMPLING_CHECKS=verify` chooses every token both ways and counts
+  the ones that differ, for testing a build on a worker.
+  `tests/server_backend_sampling_test.py` checks it
+  ([FLEET.md](docs/FLEET.md#sampling-on-the-worker)).
+- **A reply sent back is not read again** (`patches/0017`): a chat client sends the
+  previous reply back as a message, and the template and the tokeniser do not always
+  give the tokens the model wrote. The same text can be split into other tokens
+  (` book` `marks` written, ` bookmarks` on the way back), and the whitespace around
+  the end of the reasoning is the template's: what a reasoning budget left before the
+  end-of-reasoning marker, or the model wrote after it, is not what comes back. A hybrid
+  model cannot step back a few tokens, so the slot returned to its checkpoint and read
+  the whole reply again, or the whole last firing after a parked restore, and the
+  parked key was rewritten from there. Qwen3.8-27B serving agents did this on 10 of
+  227 follow-up turns, 84 to 10,508 tokens each. The server now compares the slot's
+  remaining tokens with the prompt as text, and as far as they say the same the prompt
+  continues from the slot's tokens. Whitespace is compared like any text, except right
+  before and right after the marker that closes the thinking block the template opened
+  in an assistant turn. A history that was really changed is read again as
+  before. `prompt_tokens` then counts the kept tokens, a token or two away from a
+  fresh tokenisation. It is off unless `LLAMA_REPLY_AS_GENERATED` is `1` (or `true`, `on`,
+  `yes`); the fleet controller sets it for its hosts, so the app's own server is unchanged.
+  `tests/server_reply_as_generated_test.py` checks it on a host build
+  ([FLEET.md](docs/FLEET.md#a-reply-sent-back)).
+- The fleet's llama-server keeps one context checkpoint and no RAM prompt cache
+  (`--ctx-checkpoints 1 --cache-ram 0`): saving either reads caches back from
+  every worker over the network.
+- **Qwen vision models get a narrow ubatch**: a model with a Qwen projector (`clip.projector_type`
+  `qwen*`) plans `-ub 256`, `-b 1280` and `--image-max-tokens 1280` instead of the 2048 ubatch,
+  and keeps 0.5 GiB of headroom for photos. llama.cpp needs a whole image in one ubatch only for
+  non-causal encoders (Gemma's), which keep 2048. On the console Qwen 3.8 27B UD-IQ2_S with its
+  F16 projector had 0.90 GiB free when ready at `-ub 1024` and 1.47 GiB at `-ub 256`, at the
+  same speed (median 11.1 s a photo) and with the same answers.
+- **Hybrid models start answering sooner**: with one context checkpoint a slot (`-ctxcp 1`,
+  which the app's plan and the fleet use), llama-server made three checkpoints for every prompt
+  (at the last user message, one batch before the end and 4 tokens before it) and evicted two of
+  them before the prompt was done. Each reads the model's recurrent state back from the GPU,
+  150 MiB for Qwen3.8-27B, and for a fleet split that read crosses the network.
+  `patches/0010` makes only the checkpoint a prompt keeps, so the next turn rolls back to the
+  same place as before. On a PS5 serving Qwen3.8-27B (IQ3_XXS, 128k context) to a PC over RPC,
+  LocalMaxxing's 348-token `reasoning-v1` prompt took 7.6 s to its first token and now takes
+  4.5 s, and a follow-up turn 6.6 s and now 3.3 s; generation stays at 18.1 tokens a second.
+  On the console the read stays in memory, and that gain is not measured.
+  `tests/server_checkpoints_test.py` checks it on a host build with an untrained Mamba fixture.
+- **Faster generation with a quantized KV cache on another device**: llama.cpp rotates a
+  quantized KV cache with Hadamard matrices, and it kept them in PC memory and uploaded them
+  to the device as inputs to every graph. For a fleet split those 272 KiB (Qwen3.8-27B's 256- and
+  64-wide heads) crossed the network on each token, about 2.3 ms a graph at gigabit.
+  `patches/0011` keeps one copy in the cache's device buffer when the whole cache is on one
+  device, so they are sent once at load. A PS5 serving Qwen3.8-27B (IQ3_XXS, q4_0 cache) to a
+  PC over RPC on LocalMaxxing's `reasoning-v1` test: 18.1 to 18.7 tokens a second at 128k
+  context, and with MTP self-speculation (2 drafts, 104k context) 20.1 to 21.9. Greedy output is
+  unchanged. A cache split over devices keeps the old inputs. `tests/server_kv_rotation_test.py`
+  checks it on a host build against one CPU RPC worker.
+- **Causal KQ mask built on the KV cache's device**: llama.cpp filled the attention mask in PC
+  memory and uploaded it as an `[n_kv, n_tokens]` input to every graph, about 21 MB per 512-token
+  batch at 20k context. `patches/0012` uploads only the cache cells' and the batch tokens'
+  positions and builds the mask on the device, when the whole cache is on non-host devices and
+  the batch needs a plain causal mask (no ALiBi, SWA or M-RoPE). A PS5 serving Qwen3.8-27B
+  (IQ3_XXS, q4_0 cache, `--parallel 2 -no-kvu`) to a PC over RPC: a 20k-token prompt 106.4 to
+  108.6 tokens a second, generation unchanged. Greedy output is byte-identical.
+  `LLAMA_KQ_MASK_HOST=1` keeps the old mask. `tests/server_kq_mask_test.py` checks it on a host
+  build against one CPU RPC worker, with and without flash attention.
 
-### Measured on a PS5 Fat
-Qwen3.5 9B Q4_K_M with `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache, used from Open WebUI
-0.13.3 with the Coding Sandbox and ten tool sets:
-- **Memory:** 0.75 GiB of the pool free after a 47,852-token prompt (memfix4 and memfix5: 0.35
-  GiB at the same size), cpu heap 2.08 to 2.13 GiB over 33 requests, no allocation errors.
-- **Connections:** a request on the connection of a streamed reply, and after a cancelled stream,
-  answered every time.
-- **Prompt cache:** after a 7-call agent turn, the next message evaluated 1,312 tokens and reused
-  17,220 (4 s). Every step of the following 14-call turn reused the cache.
-- **Speed:** 55 tokens a second generated (about 47 on memfix4); prompts at 192 tokens a second when
-  short and 335 at 48k (400 to 450 on 0.9.1), likely the smaller prompt batch.
-- **Agent work:** both turns' code passed its tests and independent checks in the sandbox; the
-  visible reply carried the answer. A 47.9k-token prompt found a fact hidden at 60 % depth.
+### Fixed
+- **Suggested downloads no longer fail their checksum when a repository re-uploads a file**
+  (#105). The entries pin each file's size and sha256 but were fetched from `resolve/main/`, so
+  once a repository replaced a file, the download got the new one, failed "the checksum does not
+  match", and every retry fetched it again. Four had moved: Qwen 3.8 27B, Gemma 4 E4B's vision
+  module, MiniCPM-V 4.7 1B and Clef Flash. Each entry now carries the commit its files are pinned
+  at and is fetched from `resolve/<revision>/`; the saved download queue keeps the revision, and a
+  queued file of a Suggested entry from before this update moves to its revision when the app
+  starts. A compile-time check requires a full commit id on every entry, and
+  `scripts/check-suggested.py` checks that each revision serves the pinned size and sha256 (with
+  `--find`, it names the newest commit that does).
+- **A chat no longer breaks once its text holds the media marker.** `/props` publishes the
+  marker that stands for an image in the prompt, so a tool that read `/props` put it into the
+  chat. mtmd then expected one image more than the request had, and that request and every later
+  one in the chat failed with "Failed to tokenize prompt" (HTTP 400). `patches/0022` writes the
+  marker as `[media marker]` in all message text and tool definitions, before the images get
+  theirs, on the OpenAI, Anthropic and Responses endpoints. On the console (Qwen3.5-9B with its
+  mmproj, 64k), `/props` in a message, `/props` as a tool result, an image, and an image with the
+  marker in its text were all answered. `tests/server_media_marker_test.py` checks that the marker
+  reaches no prompt as text. From @MCsumz's fork,
+  [PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix) (#98).
+- **The title heap hands back memory it frees** (#75). The heap is the payload SDK's (dlmalloc in
+  eight arenas over direct memory). At the pinned SDK it maps segments back to back, dlmalloc joins
+  neighbours into one segment, and a joined segment can only go back whole, so one block left near its
+  end keeps everything below it. Over a run of photo requests the CPU heap grew and the pool's largest
+  free block shrank. `patches/sdk` carries four later commits of the SDK by its author (2 MiB segments
+  with a gap so they never join, `ps5_heap_trim()`, calloc clearing reused memory, sleeping arena
+  locks), applied to an export of the pin at build time and linked ahead of the stock heap; the pin
+  itself does not move. The app trims the heap 0.25 s after each request and every 10 s. The memory
+  line ends with exact MiB, the heap's segments and what it has in use; `memory each` logs one after
+  every request, and `trim` / `trim on` / `trim off` trim now or turn the trim off and on.
+  Measured on the console (Qwen 3.8 27B UD-IQ2_S with its F16 projector, 25 full-size photos): the
+  largest free block of the pool ended at 1,316 MiB instead of 1,055, and the CPU heap at 1,100 MiB
+  instead of 1,321, at the same 11.8 s a photo.
+- **A model gets only a vision projector that fits it** (#106). Projectors were paired by name
+  alone, and "qwen3" was enough: with `Qwen3.5-9B.mmproj-Q8_0.gguf` in the folder, every Qwen got
+  it. Qwen 3.8 27B (5120 wide) then planned with a 4096-wide projector and "needs 11.6 GiB with a
+  4k context", so it did not fit at all, and Qwen 3.5 0.8B (1024) was planned with images its
+  projector could not feed. Now a projector whose header gives an output width
+  (`clip.vision.projection_dim` or `clip.audio.projection_dim`) other than the model's
+  `embedding_length` is passed over for the next-best name, and without one the model runs text
+  only. The width is taken only from a file marked `general.type = "mmproj"`, as
+  `convert_hf_to_gguf.py` writes them: older LLaVA-style projectors store the CLIP's own
+  `projection_dim` there (768), and they, like any projector without the key, are paired by name
+  as before. `ps5/app/model_plan_test.cpp` covers the three cases and a legacy LLaVA pair.
+- **The planner counts only a hybrid model's attention layers as KV cache** (#107). Files that
+  list `attention.head_count_kv` per layer (Nemotron-H, Granite 4 hybrid, LFM2, Jamba) give a
+  cache only to the layers where it is not zero, and the recurrent state to the layers llama.cpp
+  makes recurrent: those without KV heads, and on Nemotron-H also without a feed-forward. Before,
+  every layer counted as attention: Nemotron Nano 9B v2 (56 layers, 4 attention) got a 64k `q4_0`
+  cache planned at about 3.9 GiB and no Mamba state. Now it is 64k `q8_0`, 0.53 GiB of cache and
+  0.14 GiB of state. Pure Mamba files now count their state, and Falcon-H1 both.
+- **A test keeps a streamed reply's keep-alive connection in check.** Until the llama.cpp move,
+  llama-server's chunk provider called `done()` and then returned false, and cpp-httplib counted
+  that as a cancelled response: it closed the connection right after one that advertised
+  `Keep-Alive`, and Open WebUI agent chats stopped after their first tool call with "Server
+  Connection Error". The fix comes with the llama.cpp move (ggml-org/llama.cpp#30492).
+  `tests/server_stream_keepalive_test.py` guards it: two streams and a plain request over one
+  connection on chat, messages, responses and completion (upstream's test covers only
+  `/completion`). On the console (Qwen 3.8 27B, Open WebUI agent chat with tool calls), no
+  connection dropped. From @MCsumz's fork,
+  [PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix) (#98).
+- **A new message after a Qwen3.5 turn no longer processes the whole turn again** (#84). Qwen3.5's
+  chat template renders an assistant message's thinking only after the last user message, so the
+  next user message rendered the turn before it differently and the cache no longer matched: on the
+  console, a 37k-token chat took 190 s before its answer started. llama.cpp keeps the thinking of
+  earlier turns by default (`--reasoning-preserve`) for templates that support it; Qwen3.5's
+  template ignored it, and now honours it (`patches/0013`, in the same place llama.cpp already
+  fixes up other templates): a message has its thinking block wherever it is in the history, and
+  only when it has thinking. A client that sends the thinking back keeps it in the context; Open
+  WebUI without a provider set sends none, and its turns render as Qwen3.5 sees past turns, with no
+  block. `--no-reasoning-preserve` (or `LLAMA_ARG_REASONING_PRESERVE=false` in `env.txt`) restores
+  the template's own behaviour. Measured on the console with the template as shipped, a 4.7k-token
+  agent turn followed by a new message processed all 4,684 tokens again in 10.5 s; with the thinking
+  kept, 52 tokens in 0.2 s; in an Open WebUI chat, a follow-up after an 8.4k-token agent turn
+  processed 37 tokens in 0.2 s. Keeping an empty block on every earlier turn instead made Qwen3.5
+  leave its visible reply empty in 4 of 6 Open WebUI follow-ups, so no empty block is rendered.
+  `tests/test-chat.cpp` checks that a new message only appends and that no empty block is rendered.
+  From @MCsumz's fork, [PS5LM-memfix](https://github.com/MCsumz/PS5LM-memfix).
+- **MiniCPM-V 4.7 keeps an agent turn in the cache for clients that send the thinking back.** It is
+  a Qwen3.5 model with openbmb's own template, which renders an assistant message's thinking only
+  after the last user message and an empty block everywhere else, with no `preserve_thinking`
+  switch. On the console (MiniCPM-V 4.7 1B, PS5 Pro), only 24 of an agent turn's 276 prompt tokens
+  (8.7 %) were still a prefix after the next message, so the whole turn was processed again; Open
+  WebUI, which sends no thinking back, kept 100 %. `patches/0013` now gives that template the same
+  switch: with `--reasoning-preserve` (the default) a message keeps its thinking wherever it is,
+  and one without thinking keeps the template's empty block. `tests/test-chat.cpp` checks it with
+  the template from the Suggested file (`models/templates/openbmb-MiniCPM-V-4.7-1B.jinja`).
+- **A fleet worker no longer loses memory with every prompt batch**: llama.cpp's
+  RPC server kept a copy of every graph a host sent (about 4 MiB for a 27B
+  model) until 1,024 had come, and a host sends a new one for nearly every batch
+  of a prompt. A console serving Qwen3.8-27B lost 7.5 to 9 MiB per 1,000 prompt
+  tokens and died after about 175K. `patches/fleet/0006`: the host keeps the 8
+  graphs it used last on each device and tells the worker to free the others.
+  Both the host build and the title need the patch; either alone behaves as
+  before.
+- **A worker restart waits for the restarted worker**: the control server took the
+  worker port accepting as the restart being over, but the old worker goes on
+  accepting for some seconds after it takes the request. A host started right after
+  `ctl device restart --wait` could then find nothing listening and stop with
+  `Failed to connect`. The port cannot tell the two apart (a worker that has just
+  lost a host also refuses connections for some seconds while it frees what the
+  host held, then accepts again), so the wait is now for PS5LM to have started
+  anew, read from the first line of its `app.log`, and then for the port to accept;
+  the job's result gives both times. A console set to be a worker that reads as
+  idle or busy at that moment is looked at again and restarted as a worker, with
+  the same wait, where before the restart returned at once.
+- **Generation no longer flatlines on a log write**: the GPU driver prints a stats line from its
+  submission path, and a write to `app.log` on `/data` could block for 9-26 s with the driver's
+  lock held; each blocked print made the next one due, so generation stayed stopped until the app
+  restarted. `patches/mesa/0010` turns that line off unless `RADV_PS5_SUBMIT_STATS=1` is set in
+  `env.txt`.
+- **The app no longer stops while its log is written** (#70): stdout and stderr went straight to
+  `app.log` on `/data`, stderr unbuffered, and a write there can wait for seconds. Every thread that
+  printed waited with it: the GPU driver with its submit lock held (#69), the GL library on the
+  render thread, llama.cpp's log thread. With `-lv 4` the whole app, screen included, stalled for up
+  to a minute. Now printf, fprintf, vprintf, vfprintf, puts, fputs, fputc, putc, putchar and fwrite
+  are wrapped at link time (`scripts/build-app.sh`): a print to stdout or stderr copies its text
+  into a 2 MiB ring and returns, and one thread writes the ring to `app.log`. A full ring drops
+  text and says how much in its place. `abort()` is wrapped too, so a crash writes the ring out
+  (its reason included) before the process ends. The memory lines in `app.log` give the sink's figures.
+  On the console at `-lv 4`, 5 minutes of ~1,800-token prompts: 16 requests, 7 over 15 s (worst 58 s)
+  before; 25 requests, none stalled, after.
 
 ## [0.11.0] - 2026-11-02
 
@@ -201,128 +594,6 @@ Qwen3.5 9B Q4_K_M with `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache, u
 - The SHA-256 check at the end of a download shows how far it has read, once a second, instead of
   a line that did not move for minutes on a large file. The queue is saved when the check starts,
   so a restart during the check repeats only the check, not the download (#30, #51).
-
-## [0.9.1-memfix8] - 2026-10-29
-
-memfix5 plus two llama-server fixes for agent chats in Open WebUI; memory handling is unchanged.
-memfix6 and memfix7 were test builds of the first fix.
-
-### Fixed
-- **Prompt cache survives a new user message (Qwen3.5).** The template rendered an assistant
-  message's thinking only after the last user message, so each new message re-rendered the turn
-  before it and the cache no longer matched: a 37k-token agent chat reprocessed for 190 s.
-  `patches/0012` makes the template honour llama.cpp's `preserve_thinking` (`--reasoning-preserve`,
-  on by default): a message gets a `<think>` block wherever it is, and only if it has reasoning.
-  Empty blocks are left out because Open WebUI sends no reasoning back, and a history of empty
-  blocks made Qwen3.5 answer inside its thinking (memfix6: 4 of 6 replies empty). Off with
-  `--no-reasoning-preserve` or `LLAMA_ARG_REASONING_PRESERVE=false` in `env.txt`. Checked by
-  `tests/test-chat.cpp`.
-- **Media marker in request text.** `/props` publishes the random marker that stands for an image
-  in the prompt. Text containing it (a tool that read `/props`) made mtmd expect one image more
-  than the request had, and every later request of that chat failed with "Failed to tokenize
-  prompt". `patches/0013` writes it as `[media marker]` in all message text and tool definitions
-  before the images get theirs (OpenAI, Anthropic and Responses endpoints).
-
-### Tested on a PS5 Fat
-Qwen3.5-9B Q4_K_M with `Qwen3.5-9B.mmproj-Q8_0.gguf`, 64k context, q8_0 cache.
-- Next message after an agent turn: 52 tokens in 0.2 s instead of 4,684 in 10.5 s (4.6k-token
-  turn); 419 tokens in 1.2 s instead of 12,406 in 49.6 s (12k-token turn with tool calls).
-- Empty visible replies after an agent turn: 0 of 6 (memfix6: 4 of 6).
-- Open WebUI agent chat (Mac and LAN checks, `/props`, web search), then follow-ups in the same
-  chat: every answer visible, 118-376 tokens in 0.5-1.0 s each.
-- `/props` in a message, `/props` as a tool result, an image, and an image with the marker in its
-  text: all answered (before: HTTP 400).
-- Keep-alive: 8 of 8 streamed requests on one reused connection, gaps of 0-5 s.
-- 48k memory test, an image every turn: 42 turns to 48,504 tokens, then 6 full reprocesses; every
-  request answered, lowest 0.15 GiB free and level through all reprocesses, CPU heap 2.15-2.19 GiB.
-
-## [0.9.1-memfix5] - 2026-10-29
-
-memfix4 and one connection fix; nothing in memory changed.
-
-### Fixed
-- A streamed reply no longer closes its connection. llama-server ends each stream by returning
-  false after `sink.done()`, and cpp-httplib took that as a cancelled response: it closed the
-  connection right after sending `Keep-Alive: timeout=5`. A client that reuses the connection at once
-  lost its next request. Open WebUI sends each tool-call continuation within a fraction of a second,
-  so agent chats stopped after their first tool call with "Server Connection Error". cpp-httplib now
-  ends a stream normally once its provider has called `done()` (`patches/0011`); a cancel or a
-  failed write still closes the connection. The patch is in cpp-httplib rather than llama-server's
-  provider because 0007 keeps that provider's last line as its context. `tests/test_stream_keepalive.py`
-  sends a second request after a stream, on cpp-httplib as shipped and as patched.
-
-### Tested on a PS5 Fat
-- Connection probes against the console, memfix4 then memfix5: a request on the connection right
-  after a streamed reply (closed 6 of 6, then ok 6 of 6), back-to-back requests (2 of 6 failed, then
-  8 of 8 ok), replies of 2.7-8 s each followed at once by another (7 of 16 failed, then 16 of 16 ok),
-  a cancelled stream and then a new request (4 of 6 failed, then 6 of 6 ok), a long request and a
-  follow-up 0.2 s later (7 of 8 failed, then 2 of 2 ok).
-- An agent chat in Open WebUI with Qwen 3.5 9B, 64k context: one turn ran 45+ tool calls in a sandbox
-  with no disconnect, where memfix4 stopped after the first, and Open WebUI's compaction fired in the
-  middle of it at about 47.8k tokens, after which the model carried on. Memory went from 0.66 GiB
-  free at load to 0.35 GiB at its lowest, the CPU heap stayed at about 2.1 GiB, and no out-of-memory
-  error was logged.
-
-## [0.9.1-memfix4] - 2026-10-29
-
-The fourth iteration of the memory fix, the first one released.
-
-### Fixed
-- A long chat no longer fills the memory and stops the model. Each request runs on another of
-  llama-server's HTTP threads, and the title heap (PS5_PayloadSDK's platform layer, eight arenas)
-  kept every arena at the largest request it had served, growing 16 MiB at a time; as a chat's
-  history grew toward 48k tokens, the last half GiB after loading filled request by request.
-  `patches/sdk` makes the heap give memory back: 2 MiB growth, a segment of its own for every
-  block from 1 MiB, and `ps5_heap_trim()`, which the app calls after each request and every idle
-  second. `scripts/build-app.sh` applies it to the platform layer and links that in place of the
-  SDK's. Each request's end now logs the pool and the heap to `app.log`
-  (`memory after request`). If the pool still falls under 0.04 GiB free while no request runs,
-  the app restarts with the same model instead of stopping during the next request. The planner
-  keeps 0.5 GiB free after loading when a cheaper cache (q4_0 for q8_0) buys it, never at the cost
-  of context; choose the cache in Settings to keep q8_0. The Home feed no longer parses a request's
-  image data. On the console (Qwen 3.5 9B with images, 64k, q8_0, one chat grown to 43k tokens)
-  the heap stayed at 2.11-2.16 GiB, while the pool still fell by about 0.37 GiB.
-- That rest was the GPU's: with a quantized cache, flash attention copies a layer's K and V to f16
-  in a Vulkan scratch sized to the context so far, replaced by a larger one as the chat grows, the
-  old one freed only later. `patches/0010` makes it once, at its largest, when the model loads
-  (`GGML_VK_PREALLOC_X`, set from the plan: 256 MiB for a 9B at 64k), for the model's context
-  only (an image encoder's context has no cache to copy), and the planner counts it. With it the
-  pool stayed within 0.02 GiB from 6k to 26k tokens. A restart keeps the last run's logs as
-  `app.prev.log` and `llama.prev.log`.
-
-### Added
-- `scripts/build-in-container.sh` builds the title in CI's pinned Debian container on any Docker
-  host (Colima with Rosetta on an Apple Silicon Mac), and `scripts/ps5lm-memtest.py` measures
-  memory over a long chat against a console.
-
-### Tested on a PS5 Fat
-- Qwen 3.5 9B Q4_K_M with its vision projector, 64k context, q8_0 cache: one chat grown to 48k
-  tokens over 42 turns with an image sent every turn, then six full reprocesses of the whole 48k
-  history. Every request was answered, the CPU heap stayed at 2.12-2.18 GiB and the pool at
-  0.19 GiB free. The original 0.9.1 stopped before 48k in the same use.
-
-### From upstream after 0.9.1
-cobanov/PS5LM's main after 0.9.1, not yet released there, is in every memfix build.
-
-#### Added
-- **An opt-in endpoint for the model's own numbers**: `POST /v1/introspect` answers with the whole
-  logit row at the positions you name, the top candidates with their probabilities, the entropy, and
-  one row of a named graph tensor (`l_out`, `ffn_swiglu`, `ffn_out`, `attn_out`, `attn_norm`, `ffn_norm`,
-  `result_norm`, `result_output`) for a named layer. A request can also change one channel in place,
-  with zero, scale or add, at one position or at all of them. `messages` applies the chat template
-  first. It is off by default: Settings > Developer > "Logits and activations API" (a change
-  restarts the app with the loaded model), or `LLAMA_INTROSPECT=1`. `docs/INTROSPECTION.md` is the
-  reference, `scripts/ps5lm-introspect.py` is a client, and `examples/interpret/neuron_ablation.py`
-  zeroes the FFN neurons (`ffn_swiglu`) of one layer one at a time.
-- The patch reads the logits from the context's own output buffer and copies the tensors out of the
-  compute graph with the eval callback that llama.cpp already has, so no work is repeated and no
-  request pays for it unless it asks.
-
-#### Fixed
-- Models saved to an M.2 or USB drive show up in the library wherever that drive is mounted. The
-  library looked only in `/mnt/ext0`, `/mnt/usb0` and `/mnt/usb1`, while downloads can go to any
-  drive the exporter reports; it now also reads the download folder and every mounted drive's
-  `PS5LM/models` (#43).
 
 ## [0.9.1] - 2026-10-20
 

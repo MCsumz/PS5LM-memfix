@@ -1,25 +1,26 @@
-# Platform patches
+# Title heap patches
 
-A patch to the title heap in PS5_PayloadSDK's platform layer (`platform/src/heap.c`, dlmalloc
-as eight per-thread arenas in direct memory), applied on top of the revision PS5_Vulkan pins
-(`b83202b`):
+Four later commits of the payload SDK fork PS5LM pins (`mihawk-99/PS5_PayloadSDK` at `BASE`), by its author,
+path-filtered to the title heap (`platform/src/heap.c`, `platform/src/dlmalloc/mspace.c`,
+`platform/include/ps5platform/heap.h`) and its host tests. Each patch's message names the commit it comes from and
+what of it is left out. They are carried here rather than moving the pin, which would bring in many unrelated
+commits.
 
-- `0001`: the heap gives memory back. Arenas grow 2 MiB at a time instead of 16 MiB (as
-  `9d04878` does upstream), a block from 1 MiB has a segment of its own that is returned when
-  it is freed (the threshold was 32 MiB), frees look for wholly free segments every 255 calls,
-  and `ps5_heap_trim()` returns every arena's free segments at once. The app trims after each
-  request (`ps5/app/activity.cpp`).
+| Patch | SDK commit | What it does |
+| --- | --- | --- |
+| 0001 | `8278ca5e` | calloc clears a mapped chunk: the console hands released direct memory out with its old bytes (heap part) |
+| 0002 | `3752be7e` | arena locks block instead of spinning; arena set-up sleeps while it waits (heap part) |
+| 0003 | `9d048784` | the heap grows in 2 MiB segments instead of 16 MiB; a segment table for 8,192 |
+| 0004 | `55a2de04` | a 64 KiB gap between mappings so dlmalloc never joins segments, and a segment with nothing left in it goes back wherever it lies; `ps5_heap_trim()`; the heap's in-use figure; 32 MiB trim threshold |
 
-Without it, llama-server held each arena at the largest request it had served, since each
-request runs on another HTTP thread. With a chat whose history grows to 48k tokens the pool's
-last half GiB filled 16 MiB at a time and the model stopped. On a macOS host with the kernel
-calls stubbed, a request pattern on 15 threads held 640 MiB with the old settings and 54 MiB
-with the patch and a trim after each request. Not yet measured on the console.
+At the pin the heap maps its segments back to back and dlmalloc joins neighbours into one segment, which can only
+go back to the pool whole: one block left near its end keeps everything below it. With these, every empty segment
+can go back, and the app calls `ps5_heap_trim()` 0.25 s after each request and every 10 s (`ps5/app/heap_info.cpp`).
 
-`scripts/build-app.sh` applies it by itself: it exports the platform layer from the fork at
-the SDK's revision (`.ps5-sdk-revision`), patches it, builds `libps5platform.a` and links that
-in place of the SDK's. The SDK as installed is not changed. To patch the fork instead:
+`scripts/build-app.sh` exports `BASE` from the pinned checkout (`git archive`), applies these with
+`patch --fuzz=0`, compiles `heap.o` and `mspace.o` with the SDK's own Makefile, and links them as
+`libps5lm_heap.a` ahead of `libps5platform.a`; lld's `--why-extract` report is checked so the stock members never
+come in. The pinned checkout and the SDK cache built from it are not modified, so `scripts/test-native-build.sh`'s
+pin checks hold, and that script runs the SDK's host tests (`make -C platform test`) on the patched copy first.
 
-```sh
-cd .deps/src/PS5_PayloadSDK && git am ../../../patches/sdk/*.patch
-```
+Delete this folder once PS5LM pins the SDK at or past `55a2de04`.

@@ -175,8 +175,10 @@ def speed(s):
 
 
 def memory(s):
-    lines = [l for l in s.log('app.log').splitlines() if 'memory after request' in l]
-    return lines[-1].split('request ', 1)[1] if lines else None
+    # memfix: "memory after request"; PS5LM main: "memory after the trim" with `memory each` on
+    lines = [l for l in s.log('app.log').splitlines()
+             if 'memory after request' in l or 'memory after the trim' in l or 'memory after a request' in l]
+    return lines[-1].split('ps5lm-app: memory ', 1)[-1] if lines else None
 
 
 def main():

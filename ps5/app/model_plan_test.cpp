@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
+#include <fstream>
+#include <unistd.h>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -28,6 +31,14 @@ struct Gguf {
         kvs += str(k) + raw<uint32_t>(9) + raw<uint32_t>(7) + raw<uint64_t>(v.size());
         for (bool b : v) {
             kvs += (char) b;
+        }
+        n++;
+        return *this;
+    }
+    Gguf & kv(const std::string & k, const std::vector<uint32_t> & v) {  // a uint32 array
+        kvs += str(k) + raw<uint32_t>(9) + raw<uint32_t>(4) + raw<uint64_t>(v.size());
+        for (uint32_t x : v) {
+            kvs += raw(x);
         }
         n++;
         return *this;
@@ -70,6 +81,77 @@ int main(int argc, char ** argv) {
     assert(c.ok && c.decision.empty() && ps5lm::find_preset(c));
     const ps5lm::Plan cp = ps5lm::plan_model(c, budget);
     assert(cp.fits && cp.ctx > 4096 && has_args(cp, "-ub", "64"));
+
+    // Inkling 2 Mini (inkling2_loop): layers 6 to 17 run three times, each pass
+    // with its own cache slot, so 48 slots: the full-attention layers 5 and 23
+    // once, 11 and 17 three times (8), and 40 window layers.
+    Gguf ink;
+    std::vector<bool> ink_swa(24, true);
+    for (int il : { 5, 11, 17, 23 }) {
+        ink_swa[il] = false;
+    }
+    ink.kv("general.architecture", "inkling2_loop").kv("general.name", "Inkling-2-Mini")
+        .kv("inkling2_loop.block_count", 24u).kv("inkling2_loop.attention.head_count", 24u)
+        .kv("inkling2_loop.attention.head_count_kv", 8u).kv("inkling2_loop.embedding_length", 2304u)
+        .kv("inkling2_loop.attention.key_length", 128u).kv("inkling2_loop.attention.value_length", 128u)
+        .kv("inkling2_loop.context_length", 1048576u).kv("inkling2_loop.expert_count", 128u)
+        .kv("inkling2_loop.attention.sliding_window", 1024u)
+        .kv("inkling2_loop.attention.sliding_window_pattern", ink_swa)
+        .kv("inkling2_loop.loop.count", 3u).kv("inkling2_loop.loop.start", 6u).kv("inkling2_loop.loop.end", 18u);
+    const ps5lm::ModelInfo ik = ps5lm::read_model_header("Inkling-2-Mini-UD-Q2_K_XL.gguf", ink.bytes(), 9141428384ull);
+    assert(ik.ok && ik.n_layer == 48 && ik.n_kv_layers() == 48 && ik.n_swa_layers == 40);
+    const ps5lm::Preset * ikp = ps5lm::find_preset(ik);
+    assert(ikp && std::string(ikp->label) == "Inkling 2");
+    const ps5lm::Plan ikplan = ps5lm::plan_model(ik, budget);
+    assert(ikplan.fits && ikplan.ctx >= 32768 && ikplan.total_gib <= budget);
+
+    // Nemotron Nano 9B v2 (nemotron_h): head_count_kv and feed_forward_length per
+    // layer. Only the 4 layers with KV heads keep a cache; the 27 with neither
+    // KV heads nor a feed-forward are Mamba and keep a state; the 25 MLP layers
+    // keep nothing. Counting all 56 as attention planned 3.9 GiB of q4_0 cache
+    // at 64k where q8_0 needs 0.53 GiB (issue #107).
+    {
+        const std::string layout = "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-";
+        std::vector<uint32_t> nh_kv, nh_ff;
+        for (char c : layout) {
+            nh_kv.push_back(c == '*' ? 8u : 0u);
+            nh_ff.push_back(c == '-' ? 15680u : 0u);
+        }
+        Gguf nh;
+        nh.kv("general.architecture", "nemotron_h").kv("general.name", "NVIDIA-Nemotron-Nano-9B-v2")
+            .kv("nemotron_h.block_count", 56u).kv("nemotron_h.attention.head_count", 40u)
+            .kv("nemotron_h.attention.head_count_kv", nh_kv).kv("nemotron_h.feed_forward_length", nh_ff)
+            .kv("nemotron_h.embedding_length", 4480u).kv("nemotron_h.attention.key_length", 128u)
+            .kv("nemotron_h.attention.value_length", 128u).kv("nemotron_h.context_length", 131072u)
+            .kv("nemotron_h.ssm.inner_size", 10240u).kv("nemotron_h.ssm.state_size", 128u)
+            .kv("nemotron_h.ssm.group_count", 8u).kv("nemotron_h.ssm.conv_kernel", 4u);
+        const ps5lm::ModelInfo nm =
+            ps5lm::read_model_header("NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf", nh.bytes(), 6525153760ull);
+        assert(nm.ok && nm.n_layer == 56 && nm.n_kv_layers() == 4 && nm.n_head_kv == 8);
+        assert(nm.state_bytes == 27ull * (10240 * 128 + 3 * (10240 + 2 * 8 * 128)) * 4);
+        const double kv64 = ps5lm::kv_bytes_per_token(nm, "q8_0") * 65536 / (1024.0 * 1024 * 1024);
+        assert(kv64 > 0.52 && kv64 < 0.54);
+        const ps5lm::Plan np = ps5lm::plan_model(nm, budget);
+        assert(np.fits && np.ctx == 65536 && np.kv_type != "q4_0");
+    }
+
+    // Granite 4 hybrid and LFM2 also list head_count_kv per layer, without a
+    // feed-forward rule: every layer without KV heads is recurrent.
+    {
+        std::vector<uint32_t> g_kv(40, 0u);
+        for (int il : { 5, 15, 25, 35 }) {
+            g_kv[il] = 8u;
+        }
+        Gguf g;
+        g.kv("general.architecture", "granitehybrid").kv("granitehybrid.block_count", 40u)
+            .kv("granitehybrid.attention.head_count", 32u).kv("granitehybrid.attention.head_count_kv", g_kv)
+            .kv("granitehybrid.embedding_length", 4096u).kv("granitehybrid.feed_forward_length", 8192u)
+            .kv("granitehybrid.ssm.inner_size", 8192u).kv("granitehybrid.ssm.state_size", 128u)
+            .kv("granitehybrid.ssm.group_count", 1u).kv("granitehybrid.ssm.conv_kernel", 4u);
+        const ps5lm::ModelInfo gm = ps5lm::read_model_header("granite-4.0-h-small.gguf", g.bytes(), 4ull << 30);
+        assert(gm.ok && gm.n_kv_layers() == 4);
+        assert(gm.state_bytes == 36ull * (8192 * 128 + 3 * (8192 + 2 * 128)) * 4);
+    }
 
     // A larger prompt batch costs compute buffer, counted by the feed-forward width.
     Gguf wide_ff = chat;
@@ -123,26 +205,100 @@ int main(int argc, char ** argv) {
     full.n_swa_layers = 0;
     assert(ps5lm::plan_model(full, budget, 262144).ctx == 131072);
 
-    // Headroom: half a GiB left after loading when a cheaper cache buys it,
-    // never at the cost of context.
-    // A quantized cache also takes flash attention's f16 copy of one layer,
-    // 4 heads x (256 + 256) x 64k x 2 bytes, sized at load (patches/0010).
-    const uint64_t scratch = ps5lm::fa_scratch_bytes(c, "q8_0", 65536);
-    assert(scratch == 256ull << 20 && ps5lm::fa_scratch_bytes(c, "q4_0", 65536) == scratch);
-    assert(ps5lm::fa_scratch_bytes(c, "f16", 65536) == 0);
-    assert(cp.kv_type == "f16" || cp.scratch_bytes == ps5lm::fa_scratch_bytes(c, cp.kv_type, cp.ctx));
-    const double base = cp.weights_gib + cp.state_gib + cp.reserve_gib + scratch / 1073741824.0;
-    const double q8 = base + ps5lm::kv_bytes_per_token(c, "q8_0") * 65536 / 1073741824.0;
-    const double q4 = base + ps5lm::kv_bytes_per_token(c, "q4_0") * 65536 / 1073741824.0;
-    assert(q8 - q4 > 0.1);
-    const ps5lm::Plan roomy = ps5lm::plan_model(c, q8 + 0.6);
-    assert(roomy.ctx == 65536 && roomy.kv_type == "q8_0");
-    const ps5lm::Plan tight = ps5lm::plan_model(c, q8 + 0.1);
-    assert(tight.ctx == 65536 && tight.kv_type == "q4_0");
-    const ps5lm::Plan tightest = ps5lm::plan_model(c, q4 + 0.05);
-    assert(tightest.ctx == 65536 && tightest.kv_type == "q4_0");
-    const ps5lm::Plan forced = ps5lm::plan_model(c, q8 + 0.1, 65536, "q8_0");
-    assert(forced.ctx == 65536 && forced.kv_type == "q8_0");
+    // A Qwen projector beside its model takes images in pieces: a narrow
+    // ubatch, a 1280 batch and image cap, and the headroom kept. Another
+    // projector type keeps the wide ubatch.
+    {
+        char dir[] = "/tmp/model_plan_test.XXXXXX";
+        assert(mkdtemp(dir));
+        const std::string at = dir;
+        const auto write = [&](const std::string & name, const Gguf & g) {
+            std::ofstream(at + "/" + name, std::ios::binary) << g.bytes();
+        };
+        Gguf projector;
+        projector.kv("general.architecture", "clip").kv("clip.projector_type", "qwen3vl_merger");
+        write("Qwen3.8-27B-UD-IQ2_S.gguf", chat);
+        write("mmproj-Qwen3.8-27B-F16.gguf", projector);
+        const ps5lm::ModelInfo m = ps5lm::read_model_info(at + "/Qwen3.8-27B-UD-IQ2_S.gguf");
+        assert(m.mmproj == at + "/mmproj-Qwen3.8-27B-F16.gguf" && m.projector_type == "qwen3vl_merger");
+        const ps5lm::Plan vp = ps5lm::plan_model(m, budget, 8192);
+        assert(has_args(vp, "-ub", "256") && has_args(vp, "-b", "1280") && has_args(vp, "--image-max-tokens", "1280"));
+        assert(vp.reserve_gib >= 0.75 + 0.25 + 0.5);
+        assert(!ps5lm::causal_projector("gemma3") && ps5lm::causal_projector("qwen2vl_merger"));
+        ps5lm::ModelInfo g = m;
+        g.projector_type = "gemma3";
+        const ps5lm::Plan gp = ps5lm::plan_model(g, budget, 8192);
+        assert(has_args(gp, "-ub", "2048") && has_args(gp, "-b", "2048"));
+        assert(std::find(gp.args.begin(), gp.args.end(), "--image-max-tokens") == gp.args.end());
+        unlink((at + "/Qwen3.8-27B-UD-IQ2_S.gguf").c_str());
+        unlink((at + "/mmproj-Qwen3.8-27B-F16.gguf").c_str());
+        rmdir(dir);
+    }
+
+    // A projector is paired by name, but "qwen3" alone matches every Qwen
+    // (#106): where both widths are in the headers and differ, the next-best
+    // name is tried, and without one the model runs text only. A projector
+    // without the key is still paired by its name (above).
+    {
+        char dir[] = "/tmp/model_plan_test.XXXXXX";
+        assert(mkdtemp(dir));
+        const std::string at = dir;
+        std::vector<std::string> files;
+        const auto write = [&](const std::string & name, const Gguf & g) {
+            std::ofstream(at + "/" + name, std::ios::binary) << g.bytes();
+            files.push_back(at + "/" + name);
+        };
+        const auto qwen = [](uint32_t width) {
+            Gguf g;
+            g.kv("general.architecture", "qwen35").kv("qwen35.block_count", 32u)
+                .kv("qwen35.attention.head_count", 16u).kv("qwen35.attention.head_count_kv", 4u)
+                .kv("qwen35.embedding_length", width).kv("qwen35.context_length", 262144u);
+            return g;
+        };
+        const auto projector = [](uint32_t width) {
+            Gguf g;
+            g.kv("general.architecture", "clip").kv("general.type", "mmproj")
+                .kv("clip.projector_type", "qwen3vl_merger").kv("clip.vision.projection_dim", width);
+            return g;
+        };
+        // An older LLaVA-style projector: no general.type, and projection_dim is
+        // the CLIP's own (768), not the 4096 its model needs.
+        Gguf llava;
+        llava.kv("general.architecture", "llama").kv("llama.block_count", 32u)
+            .kv("llama.attention.head_count", 32u).kv("llama.attention.head_count_kv", 32u)
+            .kv("llama.embedding_length", 4096u).kv("llama.context_length", 4096u);
+        Gguf llava_projector;
+        llava_projector.kv("general.architecture", "clip").kv("clip.projector_type", "mlp")
+            .kv("clip.vision.projection_dim", 768u);
+        write("Qwen3.5-9B-Q4_K_M.gguf", qwen(4096));
+        write("Qwen3.8-27B-UD-Q2_K_XL.gguf", qwen(5120));
+        write("Qwen3.5-0.8B-Q4_K_M.gguf", qwen(1024));
+        write("Qwen3.5-9B.mmproj-Q8_0.gguf", projector(4096));
+        write("mmproj-Qwen3-F16.gguf", projector(1024));
+        write("llava-v1.5-7b-Q5_K_M.gguf", llava);
+        write("llava-v1.5-7b-mmproj-model-f16.gguf", llava_projector);
+
+        const ps5lm::ModelInfo nine = ps5lm::read_model_info(at + "/Qwen3.5-9B-Q4_K_M.gguf");
+        assert(nine.n_embd == 4096 && nine.mmproj == at + "/Qwen3.5-9B.mmproj-Q8_0.gguf");
+        // 9B's projector is the best name for 0.8B, but feeds 4096 wide: the next one fits.
+        const ps5lm::ModelInfo small = ps5lm::read_model_info(at + "/Qwen3.5-0.8B-Q4_K_M.gguf");
+        assert(small.mmproj == at + "/mmproj-Qwen3-F16.gguf");
+        // No projector feeds 5120: text only, and the plan has no images.
+        const ps5lm::ModelInfo big = ps5lm::read_model_info(at + "/Qwen3.8-27B-UD-Q2_K_XL.gguf");
+        assert(big.n_embd == 5120 && big.mmproj.empty() && big.mmproj_bytes == 0);
+        const ps5lm::Plan bp = ps5lm::plan_model(big, budget, 8192);
+        assert(std::find(bp.args.begin(), bp.args.end(), "--mmproj") == bp.args.end());
+        // A legacy projector's 768 is not a model width: it pairs by name.
+        const ps5lm::ModelInfo lv = ps5lm::read_model_info(at + "/llava-v1.5-7b-Q5_K_M.gguf");
+        assert(lv.n_embd == 4096 && lv.mmproj == at + "/llava-v1.5-7b-mmproj-model-f16.gguf");
+        // Without the model's width, the name alone decides, as before.
+        assert(ps5lm::find_mmproj(at + "/Qwen3.8-27B-UD-Q2_K_XL.gguf") == at + "/Qwen3.5-9B.mmproj-Q8_0.gguf");
+
+        for (const auto & f : files) {
+            unlink(f.c_str());
+        }
+        rmdir(dir);
+    }
 
     if (argc < 2) {
         std::puts("model_plan_test: ok (synthetic only)");

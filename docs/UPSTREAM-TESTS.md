@@ -34,3 +34,45 @@ Two builds side by side, each installed over FTP:
   [#113](https://github.com/cobanov/PS5LM/pull/113) now only adds a test for it.
 - #117 and #116 meet in `suggested.hpp`: the Inkling entry needs a `revision` before #117
   compiles on `main`.
+
+## 27 November 2026, afternoon: the title heap (#110) over a long chat, and as a fleet worker
+
+`scripts/ps5lm-memtest.py`: about 1.5k tokens per turn up to 48.5k, the whole history sent again
+every turn (as Open WebUI does), then 3 full reprocesses and their returns; `memory each` on, the
+figures from the line after the trim. Posted on
+[#110](https://github.com/cobanov/PS5LM/pull/110#issuecomment-7217615490).
+
+| | PS5 Fat: Qwen3.5-9B Q4_K_M + Q8_0 mmproj, an image in every request, 64k q8_0 | PS5 Pro: Qwen 3.8 27B UD-Q2_K_XL, text only, 64k q4_0 |
+|---|---|---|
+| Build | main 5e96235 + #114 + #117 | main 5e96235 |
+| Pool free: turn 1 → 48.5k → after the reprocesses | 3.74 → 3.48 → 3.43 GiB | 0.50 → 0.44 → 0.43 GiB |
+| CPU heap in use: turn 1 → end | 647 → 682 MiB | 859 → 887 MiB |
+| Largest free block at the end | 3,512 MiB | 442 MiB |
+| Full 48k reprocess | 140 s | 419 s |
+
+Every request was answered. On the Fat most of the 0.3 GiB the pool loses is outside the heap,
+where `prealloc_x` grows with a quantized cache (memfix8's `0010`, not in memfix9).
+
+**As a fleet worker** (the Fat with `PS5LM_WORKER_SCREEN=off`, a CPU llama-server on a Mac with all
+layers of Qwen3.5-9B Q4_K_M on the worker, 64k q8_0; the same chat to 49k, then 3 reprocesses).
+Posted on [#110](https://github.com/cobanov/PS5LM/pull/110#issuecomment-7220289341).
+
+| | Turn 1 | Turn 42 (48k) | After 3 reprocesses |
+|---|---|---|---|
+| Pool free | 6.06 GiB | 5.86 GiB | 5.65 GiB |
+| Worker heap mapped / in use | 52 / 40 MiB | 68 / 56 MiB | 78 / 56 MiB |
+| Largest free block | 6,208 MiB | 6,000 MiB | 5,784 MiB |
+
+A full 49k reprocess took 176 s over RPC. Worker mode in, out (`leave-worker`) and back to the
+app went over FTP request files, with no one at the console.
+
+## 27 November 2026, evening: MiniCPM-V 4.7 with #123
+
+PS5 Pro, MiniCPM-V 4.7 1B Q4_K_M, `scripts/ps5lm-modeltest.py`: how much of an agent turn's prompt
+the next message keeps. Posted on
+[#123](https://github.com/cobanov/PS5LM/pull/123#issuecomment-7224335276).
+
+| Client | main 5e96235 | main + #123 |
+|---|---|---|
+| sends the thinking back | 24 of 276 tokens (8.7 %) | 274 of 276 (99.3 %) |
+| sends none (Open WebUI) | 269 of 269 (100 %) | 269 of 269 (100 %) |

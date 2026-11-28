@@ -9,14 +9,14 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <utility>
+#include <vector>
 
 namespace ps5lm {
 
 namespace {
 
 constexpr double kGiB = 1073741824.0;
-// Free memory a plan keeps after loading when a cheaper cache can buy it (plan_model).
-constexpr double kHeadroomGib = 0.5;
 
 // GGUF metadata value types.
 enum : uint32_t { U8, I8, U16, I16, U32, I32, F32, BOOL, STRING, ARRAY, U64, I64, F64 };
@@ -100,13 +100,19 @@ std::string lower(std::string s) {
     return s;
 }
 
+ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_bytes);
+
 }  // namespace
 
 // The vision projector for a model: an "mmproj" .gguf in the same folder.
 // With several, the one whose name shares the longest start with the
 // model's, once "mmproj" and separators are set aside
 // ("mmproj-gemma-4-E4B-f16.gguf" for "gemma-4-E4B_q4_0-it.gguf").
-std::string find_mmproj(const std::string & model_path) {
+// A name can match a whole family ("qwen3" pairs any Qwen with the 3.5 9B's
+// projector, #106), so with the model's width known, a projector whose header
+// gives another output width is passed over and the next-best name is tried.
+// A projector without that key is paired by its name alone.
+std::string find_mmproj(const std::string & model_path, uint32_t n_embd) {
     const size_t slash = model_path.find_last_of('/');
     const std::string dir = model_path.substr(0, slash);
     const auto key = [](std::string n) {
@@ -118,11 +124,10 @@ std::string find_mmproj(const std::string & model_path) {
         return n;
     };
     const std::string want = key(model_path.substr(slash + 1));
-    std::string best;
-    size_t      best_len = 0;
+    std::vector<std::pair<size_t, std::string>> found;  // name in common, file name
     DIR * d = opendir(dir.c_str());
     if (!d) {
-        return best;
+        return {};
     }
     while (dirent * e = readdir(d)) {
         const std::string n = e->d_name;
@@ -136,13 +141,27 @@ std::string find_mmproj(const std::string & model_path) {
         }
         // At least the family's name in common ("gemma4e4b"), so a lone
         // projector of another model is not paired.
-        if (common >= 5 && common > best_len) {
-            best = dir + "/" + n;
-            best_len = common;
+        if (common >= 5) {
+            found.emplace_back(common, n);
         }
     }
     closedir(d);
-    return best;
+    std::sort(found.begin(), found.end(), [](const auto & a, const auto & b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    for (const auto & [common, n] : found) {
+        const std::string path = dir + "/" + n;
+        if (n_embd) {
+            Reader r;
+            r.f = std::fopen(path.c_str(), "rb");
+            const uint32_t width = parse_model_info(r, path, 0).projection_dim;
+            if (width && width != n_embd) {
+                continue;
+            }
+        }
+        return path;
+    }
+    return {};
 }
 
 namespace {
@@ -173,6 +192,7 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
 
     std::map<std::string, uint64_t> ints;  // every scalar, and the largest element of numeric arrays
     std::map<std::string, uint64_t> sums;  // numeric arrays: the sum of their elements
+    std::map<std::string, std::vector<uint64_t>> arrs;  // numeric arrays, element by element
     std::map<std::string, std::string> strs;
     for (uint64_t i = 0; i < n_kv && !r.bad; i++) {
         const std::string key = r.str();
@@ -188,10 +208,12 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
                 }
             } else if (n <= 4096) {  // per-layer values, such as head_count_kv
                 uint64_t mx = 0, sum = 0;
+                std::vector<uint64_t> & vals = arrs[key];
                 for (uint64_t j = 0; j < n; j++) {
                     const uint64_t v = read_int(r, et);
                     mx = std::max(mx, v);
                     sum += v;
+                    vals.push_back(v);
                 }
                 ints[key] = mx;
                 sums[key] = sum;
@@ -215,6 +237,15 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
     }
 
     m.arch = strs["general.architecture"];
+    m.projector_type = strs["clip.projector_type"];
+    // A projector's output width, only from files convert_hf_to_gguf.py marks as
+    // "mmproj": older LLaVA-style ones (convert_image_encoder_to_gguf.py) store
+    // the CLIP's own projection_dim there (768), not the text model's width.
+    for (const char * k : { "clip.vision.projection_dim", "clip.audio.projection_dim" }) {
+        if (strs["general.type"] == "mmproj" && ints.count(k) && !m.projection_dim) {
+            m.projection_dim = (uint32_t) ints[k];
+        }
+    }
     if (!strs["general.name"].empty()) {
         m.name = strs["general.name"];
     }
@@ -241,6 +272,7 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
     const uint64_t n_head = num("attention.head_count");
     m.n_head_kv       = (uint32_t) num("attention.head_count_kv", n_head);
     const uint64_t n_embd = num("embedding_length");
+    m.n_embd          = (uint32_t) n_embd;
     const uint64_t head_dim = n_head ? n_embd / n_head : 0;
     m.key_length      = (uint32_t) num("attention.key_length", head_dim);
     m.value_length    = (uint32_t) num("attention.value_length", head_dim);
@@ -249,6 +281,37 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
     // Sliding-window attention with its layers listed (true: a window layer),
     // as llama.cpp reads it. A pattern only in llama.cpp's code (Gemma) or a
     // single number is counted as full attention, which over-reserves.
+    // Which layers keep a KV cache and which a recurrent state, by llama.cpp's
+    // rule for the architecture. A per-layer head_count_kv (Nemotron-H, Granite
+    // 4 hybrid, LFM2, Jamba) gives a cache only to its non-zero layers; the
+    // others are recurrent, except on Nemotron-H, whose layers with a
+    // feed-forward keep neither. Nemotron Nano 9B v2 has 56 layers: 4
+    // attention, 25 feed-forward, 27 Mamba.
+    std::vector<uint8_t> is_kv(m.n_layer, 1), is_rec(m.n_layer, 0);
+    const auto hkv = arrs.find(a + "attention.head_count_kv");
+    const auto ffs = arrs.find(a + "feed_forward_length");
+    const bool nemotron_h = m.arch == "nemotron_h" || m.arch == "nemotron_h_moe";
+    for (uint32_t il = 0; il < m.n_layer; il++) {
+        if (hkv != arrs.end()) {
+            const bool attn = il >= hkv->second.size() || hkv->second[il] != 0;
+            const bool ff   = ffs == arrs.end() || il >= ffs->second.size() || ffs->second[il] != 0;
+            is_kv[il]  = attn;
+            is_rec[il] = !attn && !(nemotron_h && ff);
+        } else if (m.arch == "mamba" || m.arch == "mamba2") {
+            is_kv[il]  = 0;
+            is_rec[il] = 1;
+        } else if (m.arch == "falcon-h1") {  // attention and Mamba side by side in every layer
+            is_rec[il] = 1;
+        } else if (m.full_attn_every > 1) {  // Qwen 3.5/3.8: every n-th layer is attention
+            is_kv[il]  = (il + 1) % m.full_attn_every == 0;
+            is_rec[il] = !is_kv[il];
+        }
+    }
+    if (hkv != arrs.end()) {
+        m.n_attn_layers = (uint32_t) std::count(is_kv.begin(), is_kv.end(), 1);
+    }
+    uint64_t n_rec = std::count(is_rec.begin(), is_rec.end(), 1);
+
     const auto pattern = sums.find(a + "attention.sliding_window_pattern");
     if (pattern != sums.end() && num("attention.sliding_window")) {
         m.n_swa_layers = (uint32_t) std::min<uint64_t>(pattern->second, m.n_kv_layers());
@@ -256,12 +319,41 @@ ModelInfo parse_model_info(Reader r, const std::string & path, uint64_t file_byt
     }
     m.n_expert        = (uint32_t) num("expert_count");
 
+    // A learned relative position bias (Inkling 2) is built per head for every
+    // cached token and ubatch token. ggml-vulkan's compute buffer grew by about
+    // 208 bytes for each (Inkling 2 Mini, -ub 64, q8_0 cache, all on the GPU):
+    // 226 MiB at 16k, 832 MiB at 64k, 1673 MiB at 128k.
+    if (num("attention.relative_extent")) {
+        m.bias_bytes = 208.0;
+    }
+
+    // Looped models (Inkling 2): the layers [loop.start, loop.end) run loop.count
+    // times a token, and llama.cpp gives every pass its own cache slot. Inkling 2
+    // Mini has 24 layers and 48 slots: 8 hold the whole context, 40 the window.
+    const uint64_t loop_count = num("loop.count"), loop_start = num("loop.start"), loop_end = num("loop.end");
+    if (loop_count > 1 && loop_start < loop_end && loop_end <= m.n_layer) {
+        const auto swa = arrs.find(a + "attention.sliding_window_pattern");
+        uint32_t n_slot = 0, n_kv = 0, n_swa = 0;
+        n_rec = 0;
+        for (uint32_t il = 0; il < m.n_layer; il++) {
+            const uint32_t passes = il >= loop_start && il < loop_end ? (uint32_t) loop_count : 1;
+            n_slot += passes;
+            n_kv   += is_kv[il] ? passes : 0;
+            n_rec  += is_rec[il] ? passes : 0;
+            if (m.swa_window && swa != arrs.end() && il < swa->second.size() && swa->second[il]) {
+                n_swa += passes;
+            }
+        }
+        m.n_layer       = n_slot;
+        m.n_attn_layers = m.n_attn_layers || m.full_attn_every > 1 ? n_kv : 0;
+        m.n_swa_layers  = m.swa_window ? std::min(n_swa, m.n_kv_layers()) : 0;
+    }
+
     // Recurrent layers (Gated DeltaNet, Mamba): a fixed f32 state each,
     // the recurrent matrix plus the convolution window.
     const uint64_t inner = num("ssm.inner_size"), state = num("ssm.state_size");
     if (inner && state) {
         const uint64_t groups = num("ssm.group_count", 1), conv = num("ssm.conv_kernel", 4);
-        const uint64_t n_rec  = m.n_layer - m.n_kv_layers();
         m.state_bytes = n_rec * (inner * state + (conv - 1) * (inner + 2 * groups * state)) * 4;
     }
     m.ok = m.n_layer > 0;
@@ -277,10 +369,13 @@ ModelInfo read_model_info(const std::string & path) {
     Reader r;
     r.f = std::fopen(path.c_str(), "rb");
     ModelInfo m = parse_model_info(r, path, 0);
-    m.mmproj = find_mmproj(path);
+    m.mmproj = find_mmproj(path, m.n_embd);
     if (!m.mmproj.empty()) {
         struct stat st = {};
         m.mmproj_bytes = stat(m.mmproj.c_str(), &st) == 0 ? (uint64_t) st.st_size : 0;
+        Reader pr;
+        pr.f = std::fopen(m.mmproj.c_str(), "rb");
+        m.projector_type = parse_model_info(pr, m.mmproj, 0).projector_type;
     }
     return m;
 }
@@ -305,13 +400,6 @@ double kv_bytes_per_token(const ModelInfo & m, const std::string & type) {
     return (m.n_kv_layers() - m.n_swa_layers) * kv_bytes_per_layer_token(m, type);
 }
 
-uint64_t fa_scratch_bytes(const ModelInfo & m, const std::string & type, uint32_t ctx) {
-    if (type == "f16") {
-        return 0;  // flash attention reads an f16 cache in place
-    }
-    return (uint64_t) m.n_head_kv * (m.key_length + m.value_length) * ctx * 2;
-}
-
 // Sampling as each model's authors recommend it. Settings the planner works
 // out (context, cache type) are not here.
 const std::vector<Preset> & presets() {
@@ -319,6 +407,9 @@ const std::vector<Preset> & presets() {
         // PrismML's model card (thinking mode); min_p 0.05 is not in the file.
         { "bonsai", "Bonsai 2", "Qwen 3.8 27B in ternary weights; Q2_0 is 7.1 GiB and keeps 64k with room to spare",
           { "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0.05" }, 65536 },
+        // Thinking Machines' model card; the GGUF carries the same in general.sampling.*.
+        { "inkling", "Inkling 2", "26B MoE, 3.4B active, looped; UD-Q2_K_XL leaves room for a long context",
+          { "--temp", "1.0", "--top-p", "1.0", "--top-k", "0", "--min-p", "0" } },
         { "qwen3.8", "Qwen 3.8", "27B hybrid Gated DeltaNet; UD-Q2_K_XL holds 64k context on the GPU",
           { "--temp", "0.6", "--top-p", "0.95", "--top-k", "20", "--min-p", "0" } },
         { "qwen3.6", "Qwen 3.6", "MoE 35B-A3B or dense 27B; the MoE decodes fastest",
@@ -378,8 +469,11 @@ Plan plan_model(const ModelInfo & m, double budget_gib, uint32_t ctx_cap, const 
     // Decision models (laya, clef, vllm-d3, lfm2-d1-omni) and non-causal image
     // encoders (mtmd caps an image to the ubatch) need a whole prompt or image in
     // one ubatch, so they get 2048, the size #13 ran on the console.
-    const bool wide = !m.decision.empty() || !m.mmproj.empty();
-    p.ubatch = wide ? 2048 : std::max<uint32_t>(ubatch, 1);
+    // A causal projector (Qwen's) takes the image in pieces: its model gets
+    // kVisionUbatch and is not wide.
+    const bool causal_vision = !m.mmproj.empty() && m.decision.empty() && causal_projector(m.projector_type);
+    const bool wide = !m.decision.empty() || (!m.mmproj.empty() && !causal_vision);
+    p.ubatch = wide ? 2048 : causal_vision ? kVisionUbatch : std::max<uint32_t>(ubatch, 1);
     // Compute buffers grow with the ubatch, by about 38 bytes a token for each
     // unit of feed-forward width: on Qwen 3.8 27B (17,408 wide), at 64k with a
     // q4_0 cache, ggml-vulkan's device and host compute buffers took 41 MiB
@@ -387,47 +481,39 @@ Plan plan_model(const ModelInfo & m, double budget_gib, uint32_t ctx_cap, const 
     // paths. The 0.75 GiB above holds the 64 the console was calibrated at.
     const double ub_extra = !wide && p.ubatch > 64 ? (p.ubatch - 64) * (double) m.n_ff * 38.0 / kGiB : 0.0;
     // shortcut: 0.5 GiB more compute buffer for the 2048 ubatch is a guess; measure on the console.
-    p.reserve_gib = 0.75 + p.state_gib + (m.mmproj.empty() ? 0.0 : 0.25) + (wide ? 0.5 : 0.0) + ub_extra;
+    // A causal vision model keeps the 0.5 as headroom: each photo needs working
+    // memory, and free memory shrank by about 0.5 GiB over 100 photos on the
+    // console (Qwen 3.8 27B, -ub 256).
+    p.reserve_gib = 0.75 + p.state_gib + (m.mmproj.empty() ? 0.0 : 0.25) + (wide || causal_vision ? 0.5 : 0.0) + ub_extra;
 
-    // The longest context first. At each length the best cache that leaves
-    // kHeadroomGib free after loading, else the best that fits at all: the
-    // headroom costs cache precision, never context. A long chat's requests
-    // take more of the CPU heap as the history grows, and with half a GiB
-    // left the pool filled and the model stopped (a 9B with images at 64k,
-    // 10.9 of 11.4 GiB at load).
+    // The longest context first, and at each length the best cache that fits.
     static const uint32_t ctxs[]  = { 262144, 196608, 131072, 65536, 32768, 16384, 8192, 4096 };
     static const char *   types[] = { "f16", "q8_0", "q4_0" };
     for (uint32_t ctx : ctxs) {
         if (ctx > ctx_cap) {
             continue;
         }
-        for (const double headroom : { kHeadroomGib, 0.0 }) {
-            for (const char * t : types) {
-                if (kv_force && std::strcmp(t, kv_force) != 0) {
-                    continue;
-                }
-                // f16 only where it is cheap: q8_0 costs nothing measurable in quality.
-                if (!kv_force && std::strcmp(t, "f16") == 0 && ctx > 8192) {
-                    continue;
-                }
-                // Window layers hold the window and one ubatch, padded to 256,
-                // whatever the context (llama.cpp's iSWA cache without --swa-full).
-                const uint32_t swa_tokens = std::min(ctx, (m.swa_window + p.ubatch + 255) / 256 * 256);
-                const double   kv         = (kv_bytes_per_token(m, t) * ctx +
-                                     m.n_swa_layers * kv_bytes_per_layer_token(m, t) * swa_tokens) / kGiB;
-                const double   scratch    = fa_scratch_bytes(m, t, ctx) / kGiB;
-                const double total   = p.weights_gib + kv + scratch + p.state_gib + p.reserve_gib;
-                if (total + headroom <= budget_gib) {
-                    p.fits = true;
-                    p.ctx = ctx;
-                    p.kv_type = t;
-                    p.kv_gib = kv;
-                    p.scratch_bytes = fa_scratch_bytes(m, t, ctx);
-                    p.total_gib = total;
-                    break;
-                }
+        for (const char * t : types) {
+            if (kv_force && std::strcmp(t, kv_force) != 0) {
+                continue;
             }
-            if (p.fits) {
+            // f16 only where it is cheap: q8_0 costs nothing measurable in quality.
+            if (!kv_force && std::strcmp(t, "f16") == 0 && ctx > 8192) {
+                continue;
+            }
+            // Window layers hold the window and one ubatch, padded to 256,
+            // whatever the context (llama.cpp's iSWA cache without --swa-full).
+            const uint32_t swa_tokens = std::min(ctx, (m.swa_window + p.ubatch + 255) / 256 * 256);
+            const double   kv         = (kv_bytes_per_token(m, t) * ctx +
+                                 m.n_swa_layers * kv_bytes_per_layer_token(m, t) * swa_tokens) / kGiB;
+            const double bias  = m.bias_bytes * ctx * p.ubatch / kGiB;
+            const double total = p.weights_gib + kv + bias + p.state_gib + p.reserve_gib;
+            if (total <= budget_gib) {
+                p.fits = true;
+                p.ctx = ctx;
+                p.kv_type = t;
+                p.kv_gib = kv;
+                p.total_gib = total;
                 break;
             }
         }
@@ -450,7 +536,8 @@ Plan plan_model(const ModelInfo & m, double budget_gib, uint32_t ctx_cap, const 
 
     p.args = { "-m", m.path, "-ngl", "999", "-fit", "off", "-lm", "none",
                "-c", std::to_string(p.ctx), "-fa", "on", "-ctk", p.kv_type, "-ctv", p.kv_type,
-               "-b", std::to_string(std::max<uint32_t>(256, p.ubatch)), "-ub", std::to_string(p.ubatch), "-np", "1",
+               "-b", std::to_string(causal_vision ? kVisionImageCap : std::max<uint32_t>(256, p.ubatch)),
+               "-ub", std::to_string(p.ubatch), "-np", "1",
                // One prompt checkpoint and no RAM cache: llama-server's defaults
                // (32 checkpoints, 8 GiB) are for a PC, and the CPU shares this pool.
                "-ctxcp", "1", "-cram", "0",
@@ -458,10 +545,17 @@ Plan plan_model(const ModelInfo & m, double budget_gib, uint32_t ctx_cap, const 
     if (!m.mmproj.empty()) {
         p.args.insert(p.args.end(), { "--mmproj", m.mmproj });
     }
+    if (causal_vision) {
+        p.args.insert(p.args.end(), { "--image-max-tokens", std::to_string(kVisionImageCap) });
+    }
     if (preset) {
         p.args.insert(p.args.end(), preset->args.begin(), preset->args.end());
     }
     return p;
+}
+
+bool causal_projector(const std::string & projector_type) {
+    return lower(projector_type).rfind("qwen", 0) == 0;
 }
 
 std::vector<std::string> find_models(const std::vector<std::string> & dirs) {

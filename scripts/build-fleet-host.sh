@@ -26,14 +26,13 @@ if [ "$actual" != "$expected" ]; then
 fi
 # Keep the same patch set on the controller and the PS5 title (scripts/build-app.sh
 # applies patches/fleet too), with no protocol fork.
-for patch in "$root"/patches/*.patch "$root"/patches/fleet/*.patch; do
-    git -C "$llama" apply --reverse --check "$patch" 2>/dev/null || git -C "$llama" apply "$patch"
-done
-# patches/0007's request hooks are weak and only the PS5 title defines them; ELF
-# linkers leave them null, Apple's ld must be told they may stay undefined.
+"$root/scripts/apply-patches.sh" "$llama" "$root"/patches/*.patch "$root"/patches/fleet/*.patch
+# patches/0007's request hooks, patches/fleet/0005's cache writer and
+# patches/fleet/0009's park writer are weak and only the PS5 title defines them;
+# ELF linkers leave them null, Apple's ld must be told they may stay undefined.
 link_flags=()
 if [ "$(uname -s)" = Darwin ]; then
-    link_flags=("-DCMAKE_EXE_LINKER_FLAGS=-Wl,-U,_ps5lm_activity_begin -Wl,-U,_ps5lm_activity_data -Wl,-U,_ps5lm_activity_end")
+    link_flags=("-DCMAKE_EXE_LINKER_FLAGS=-Wl,-U,_ps5lm_activity_begin -Wl,-U,_ps5lm_activity_data -Wl,-U,_ps5lm_activity_end -Wl,-U,_ps5lm_rpc_cache_write -Wl,-U,_ps5lm_rpc_park_write")
 fi
 "$cmake_bin" -S "$llama" -B "$out" -G Ninja "${link_flags[@]}" \
     -DCMAKE_MAKE_PROGRAM="$(command -v "$ninja_bin")" \
@@ -46,7 +45,7 @@ fi
     -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON \
     -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
 "$cmake_bin" --build "$out" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" \
-    --target llama-server llama-cli ggml-rpc-server test-rpc-multi-server
+    --target llama-server llama-cli ggml-rpc-server llama-fit-params test-rpc-multi-server
 python3 - "$out" "$actual" "$(git -C "$root" rev-parse HEAD)" "$root" "$gpu" <<'PY_MANIFEST'
 import hashlib
 import json
