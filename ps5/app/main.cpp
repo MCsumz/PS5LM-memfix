@@ -787,6 +787,13 @@ struct Models {
             setenv("LLAMA_TOOLS_ROOT", g_files.scratch.c_str(), 1);
             chdir(g_files.scratch.c_str());
             args.insert(args.end(), { "--tools", kTools });
+            // llama.cpp (since d2bceda3d) refuses server tools on a network
+            // address without an API key, and llama-server would not start
+            // (cobanov/PS5LM#122). The tools stay in the scratch folder; an
+            // app-args.txt with --api-key keeps the check.
+            if (std::find(args.begin(), args.end(), "--api-key") == args.end()) {
+                args.push_back("--allow-unauthenticated-tools");
+            }
         }
         for (const auto & a : args) {
             ps5lm::log_line("arg %s\n", a.c_str());
